@@ -1,9 +1,14 @@
 import tensorflow as tf
 import re
 import numpy as np
-import  math
+import math
 import mido
+import sys
 from collections import Counter
+
+if len(sys.argv) < 3:
+	print "Give input file and output destination"
+	sys.exit(1)
 
 class MyMessage:
 	def __init__(self, m):
@@ -14,7 +19,7 @@ class MyMessage:
 		return hash(self.mes.hex()) * 31 + hash(self.mes.time) * 7
 
 tokenized = list()
-for msg in mido.MidiFile('SUAD.mid'):
+for msg in mido.MidiFile(sys.argv[1]):
 	if not isinstance(msg, mido.MetaMessage):
 		tokenized.append(MyMessage(msg))
 
@@ -40,8 +45,8 @@ trainInts1.append(stopToken) # append STOP token
 trainInts = np.array(trainInts1)
 
 # Inputs and outputs
-batchSize = 50
-numSteps = 20
+batchSize = 30
+numSteps = 30
 x = tf.placeholder(tf.int32, [batchSize, None])
 y = tf.placeholder(tf.int32, [batchSize, None])
 keepProb = tf.placeholder(tf.float32)
@@ -78,7 +83,7 @@ sess = tf.InteractiveSession()
 trainStep = tf.train.AdamOptimizer(1e-4).minimize(perplexity)
 sess.run(tf.initialize_all_variables())
 
-NUM_EPOCHS = 20
+NUM_EPOCHS = 1000
 for e in range(NUM_EPOCHS):
 	state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 	X = 0
@@ -88,8 +93,8 @@ for e in range(NUM_EPOCHS):
 				y: np.reshape(trainInts[X+1:X+1+batchSize*numSteps], (batchSize, numSteps)),
 				keepProb: 0.5,
 				initialState: state })
-		print(perp)
 		X += batchSize*numSteps
+	print e, perp
 
 state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 curr_word_ids = np.empty((batchSize, 1))
@@ -111,14 +116,10 @@ while nextToken != stopToken:
 mid = mido.MidiFile()
 track = mido.MidiTrack()
 mid.tracks.append(track)
-track.append(mido.Message('program_change', program=12, time=0))
+track.append(mido.Message('program_change', program=0, time=0))
 
 for msg in gen_words:
-	# p = mido.Parser()
-	# bytes = [int("0x" + hexString, 16) for hexString in msg..split()]
-	# p.feed(bytes)
-	# message = p.get_message()
 	print(msg.mes)
 	track.append(msg.mes)
 
-mid.save('test2.mid')
+mid.save(sys.argv[2])

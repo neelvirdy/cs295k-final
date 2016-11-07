@@ -55,12 +55,13 @@ def extract_features(messageId, lookup):
 	])
 
 def next_batch(token_ids, features, i, batch_size, num_steps):
-	start = i * batch_size * num_steps
-	starts = np.arange(start, start + batch_size * num_steps, num_steps)
+	max_start = len(token_ids) - batch_size - 1
+	starts = np.random.randint(0, max_start, size=batch_size)
 	ends = starts + num_steps
 	indices = np.array([range(start, end) for start, end in zip(starts, ends)])
 	features_x = np.take(features, indices, axis=0)
 	ids_y = np.take(token_ids, indices+1)
+	print indices, indices+1
 	return features_x, ids_y
 
 tokenized = list()
@@ -102,8 +103,8 @@ velocitySize = len(id_by_velocity)+1
 
 # Inputs and outputs
 numFeatures = len(trainFeatures[0])
-batchSize = 10
-numSteps = 30
+batchSize = 5
+numSteps = 10
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None])
 keepProb = tf.placeholder(tf.float32)
@@ -154,7 +155,7 @@ sess = tf.InteractiveSession()
 trainStep = tf.train.AdamOptimizer(1e-4).minimize(perplexity)
 sess.run(tf.initialize_all_variables())
 
-NUM_EPOCHS = 800
+NUM_EPOCHS = 2000
 for e in range(NUM_EPOCHS):
 	i = 0
 	state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
@@ -170,7 +171,8 @@ for e in range(NUM_EPOCHS):
 		})
 		X += batchSize*numSteps
 		i += 1
-	print e, perp
+	if e % 20 == 0:
+		print e, perp
 
 state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 curr_word_id = 0
@@ -183,8 +185,10 @@ while nextToken != stopToken:
 	logs = batchLogits[0]
 	my_logits = logs - logs.min()
 	my_logits[0] = 0
-	prob_dist = np.divide(my_logits, my_logits.sum())
+	sq_my_logits = np.multiply(my_logits, my_logits)
+	prob_dist = np.divide(sq_my_logits, sq_my_logits.sum())
 	nextToken = np.random.choice(vocabSize, 1, p=prob_dist)[0]
+	# nextToken = np.argmax(my_logits)
 	curr_features = np.tile(extract_features(nextToken, lookup), (batchSize, 1, 1))
 	if nextToken != stopToken:
 		gen_words.append(lookup[nextToken])

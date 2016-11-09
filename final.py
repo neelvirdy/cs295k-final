@@ -7,7 +7,7 @@ import sys
 from collections import Counter
 
 if len(sys.argv) < 3:
-	print "Give input file and output destination"
+	print("Give input file and output destination")
 	sys.exit(1)
 
 class MyMessage:
@@ -33,7 +33,7 @@ def extract_features(messageId, lookup):
 	if messageId == 0 or messageId == stopToken:
 		return np.zeros(5)
 	message = lookup[messageId].mes
-	print message
+	print(message)
 	if message.type not in id_by_msg_type:
 		id_by_msg_type[message.type] = len(id_by_msg_type)+1
 		msg_type_by_id[len(msg_type_by_id)] = message.type
@@ -74,9 +74,12 @@ vocab = dict()
 lookup = dict()
 vocabSize = len(counts)+2 # include START/STOP
 index = 1 # starts at 1 to account for START token
+lastToken = 0
 for word in counts:
 	vocab[word] = index
 	lookup[index] = word
+	if (word.mes.type == "note_on" and word.mes.note == 96 and word.mes.velocity == 0):
+		lastToken = index
 	index += 1
 stopToken = index
 
@@ -102,8 +105,8 @@ velocitySize = len(id_by_velocity)+1
 
 # Inputs and outputs
 numFeatures = len(trainFeatures[0])
-batchSize = 10
-numSteps = 30
+batchSize = 1
+numSteps = 1
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None])
 keepProb = tf.placeholder(tf.float32)
@@ -154,7 +157,7 @@ sess = tf.InteractiveSession()
 trainStep = tf.train.AdamOptimizer(1e-4).minimize(perplexity)
 sess.run(tf.initialize_all_variables())
 
-NUM_EPOCHS = 800
+NUM_EPOCHS = 100
 for e in range(NUM_EPOCHS):
 	i = 0
 	state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
@@ -170,7 +173,7 @@ for e in range(NUM_EPOCHS):
 		})
 		X += batchSize*numSteps
 		i += 1
-	print e, perp
+		print(e, perp)
 
 state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 curr_word_id = 0
@@ -184,8 +187,13 @@ while nextToken != stopToken:
 	my_logits = logs - logs.min()
 	my_logits[0] = 0
 	prob_dist = np.divide(my_logits, my_logits.sum())
-	nextToken = np.random.choice(vocabSize, 1, p=prob_dist)[0]
+	# Sample from distribution using logits
+	# nextToken = np.random.choice(vocabSize, 1, p=prob_dist)[0]
+	# Pick most likely logit
+	nextToken = np.argmax(my_logits)
 	curr_features = np.tile(extract_features(nextToken, lookup), (batchSize, 1, 1))
+	if nextToken == lastToken:
+		print(prob_dist)
 	if nextToken != stopToken:
 		gen_words.append(lookup[nextToken])
 

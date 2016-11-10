@@ -162,7 +162,7 @@ for e in range(NUM_EPOCHS):
 	i = 0
 	state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 	X = 0
-	while X + batchSize * numSteps + 1 < len(trainInts):
+	while X + batchSize * numSteps + 1 <= len(trainInts):
 		batch_x, batch_y = next_batch(trainInts, trainFeatures, i, batchSize, numSteps)
 		state, _, perp = sess.run([outst, trainStep, perplexity],
 		feed_dict={
@@ -192,8 +192,8 @@ while nextToken != stopToken:
 	# Pick most likely logit
 	nextToken = np.argmax(my_logits)
 	curr_features = np.tile(extract_features(nextToken, lookup), (batchSize, 1, 1))
-	if nextToken == lastToken:
-		print(prob_dist)
+	# if nextToken == lastToken:
+	# 	print(prob_dist)
 	if nextToken != stopToken:
 		gen_words.append(lookup[nextToken])
 

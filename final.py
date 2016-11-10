@@ -7,7 +7,7 @@ import sys
 from collections import Counter
 
 if len(sys.argv) < 3:
-	print "Give input file and output destination"
+	print("Give input file and output destination")
 	sys.exit(1)
 
 class MyMessage:
@@ -33,7 +33,7 @@ def extract_features(messageId, lookup):
 	if messageId == 0 or messageId == stopToken:
 		return np.zeros(5)
 	message = lookup[messageId].mes
-	print message
+	print(message)
 	if message.type not in id_by_msg_type:
 		id_by_msg_type[message.type] = len(id_by_msg_type)+1
 		msg_type_by_id[len(msg_type_by_id)] = message.type
@@ -55,13 +55,12 @@ def extract_features(messageId, lookup):
 	])
 
 def next_batch(token_ids, features, i, batch_size, num_steps):
-	max_start = len(token_ids) - batch_size - 1
+	max_start = len(token_ids) - num_steps
 	starts = np.random.randint(0, max_start, size=batch_size)
 	ends = starts + num_steps
 	indices = np.array([range(start, end) for start, end in zip(starts, ends)])
 	features_x = np.take(features, indices, axis=0)
 	ids_y = np.take(token_ids, indices+1)
-	print indices, indices+1
 	return features_x, ids_y
 
 tokenized = list()
@@ -103,8 +102,8 @@ velocitySize = len(id_by_velocity)+1
 
 # Inputs and outputs
 numFeatures = len(trainFeatures[0])
-batchSize = 5
-numSteps = 10
+batchSize = 1
+numSteps = 1
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None])
 keepProb = tf.placeholder(tf.float32)
@@ -155,12 +154,12 @@ sess = tf.InteractiveSession()
 trainStep = tf.train.AdamOptimizer(1e-4).minimize(perplexity)
 sess.run(tf.initialize_all_variables())
 
-NUM_EPOCHS = 2000
+NUM_EPOCHS = 100
 for e in range(NUM_EPOCHS):
 	i = 0
 	state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 	X = 0
-	while X + batchSize * numSteps + 1 < len(trainInts):
+	while X + batchSize * numSteps + 1 <= len(trainInts):
 		batch_x, batch_y = next_batch(trainInts, trainFeatures, i, batchSize, numSteps)
 		state, _, perp = sess.run([outst, trainStep, perplexity],
 		feed_dict={
@@ -171,8 +170,8 @@ for e in range(NUM_EPOCHS):
 		})
 		X += batchSize*numSteps
 		i += 1
-	if e % 20 == 0:
-		print e, perp
+		if e % 20 == 0:
+			print(e, perp)
 
 state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 curr_word_id = 0
@@ -187,7 +186,9 @@ while nextToken != stopToken:
 	my_logits[0] = 0
 	sq_my_logits = np.multiply(my_logits, my_logits)
 	prob_dist = np.divide(sq_my_logits, sq_my_logits.sum())
+	# Sample from distribution using logits
 	nextToken = np.random.choice(vocabSize, 1, p=prob_dist)[0]
+	# Pick most likely logit
 	# nextToken = np.argmax(my_logits)
 	curr_features = np.tile(extract_features(nextToken, lookup), (batchSize, 1, 1))
 	if nextToken != stopToken:

@@ -4,6 +4,7 @@ import numpy as np
 import math
 import mido
 import sys
+import os
 from collections import Counter
 
 if len(sys.argv) < 3:
@@ -63,13 +64,23 @@ def next_batch(token_ids, features, i, batch_size, num_steps):
 	ids_y = np.take(token_ids, indices+1)
 	return features_x, ids_y
 
+def tokenizeFile(path, songIndex):
+	tokenized.append(list());
+	for msg in mido.MidiFile(path):
+		if not isinstance(msg, mido.MetaMessage):
+			tokenized[songIndex].append(MyMessage(msg))
+
 tokenized = list()
-for msg in mido.MidiFile(sys.argv[1]):
-	if not isinstance(msg, mido.MetaMessage):
-		tokenized.append(MyMessage(msg))
+if os.path.isdir(sys.argv[1]):
+	i = 0
+	for filename in os.listdir(sys.argv[1]):
+		tokenizeFile(sys.argv[1] + "/" + filename, i)
+		i += 1
+else:
+	tokenizeFile(sys.argv[1], 0)
 
 # Convert the messages to ints
-counts = Counter(tokenized)
+counts = Counter([msg for song in tokenized for msg in song])
 vocab = dict()
 lookup = dict()
 vocabSize = len(counts)+2 # include START/STOP
@@ -82,10 +93,11 @@ stopToken = index
 
 # Build train/test int lists
 trainInts1 = list()
-trainInts1.append(0) # prepend START token
-for word in tokenized:
-	trainInts1.append(vocab[word])
-trainInts1.append(stopToken) # append STOP token
+for song in tokenized:
+	trainInts1.append(0) # prepend START token
+	for word in song:
+		trainInts1.append(vocab[word])
+	trainInts1.append(stopToken) # append STOP token
 
 trainInts = np.array(trainInts1)
 
@@ -102,8 +114,8 @@ velocitySize = len(id_by_velocity)+1
 
 # Inputs and outputs
 numFeatures = len(trainFeatures[0])
-batchSize = 1
-numSteps = 1
+batchSize = 10
+numSteps = 20
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None])
 keepProb = tf.placeholder(tf.float32)
@@ -154,7 +166,7 @@ sess = tf.InteractiveSession()
 trainStep = tf.train.AdamOptimizer(1e-4).minimize(perplexity)
 sess.run(tf.initialize_all_variables())
 
-NUM_EPOCHS = 100
+NUM_EPOCHS = 400
 for e in range(NUM_EPOCHS):
 	i = 0
 	state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
@@ -187,9 +199,9 @@ while nextToken != stopToken:
 	sq_my_logits = np.multiply(my_logits, my_logits)
 	prob_dist = np.divide(sq_my_logits, sq_my_logits.sum())
 	# Sample from distribution using logits
-	nextToken = np.random.choice(vocabSize, 1, p=prob_dist)[0]
+	# nextToken = np.random.choice(vocabSize, 1, p=prob_dist)[0]
 	# Pick most likely logit
-	# nextToken = np.argmax(my_logits)
+	nextToken = np.argmax(my_logits)
 	curr_features = np.tile(extract_features(nextToken, lookup), (batchSize, 1, 1))
 	if nextToken != stopToken:
 		gen_words.append(lookup[nextToken])

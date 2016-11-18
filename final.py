@@ -70,6 +70,13 @@ def tokenizeFile(path, songIndex):
 		if not isinstance(msg, mido.MetaMessage):
 			tokenized[songIndex].append(MyMessage(msg))
 
+def make_embeddings(embedSize, outSizes):
+	return [tf.Variable(tf.random_uniform([outSize, embedSize], minval=-1, maxval=1, dtype=tf.float32, seed=0)) for outSize in outSizes]
+
+def embeddings_lookup(E, x):
+	e_list = [tf.nn.embedding_lookup(E_i, x[:, :, i]) for i, E_i in enumerate(E)]
+	return tf.concat(2, e_list)
+
 tokenized = list()
 if os.path.isdir(sys.argv[1]):
 	i = 0
@@ -122,22 +129,9 @@ keepProb = tf.placeholder(tf.float32)
 
 # Embedding matrix
 embedSize = 50
-E = tf.Variable(tf.random_uniform([vocabSize, embedSize], minval=-1, maxval=1, dtype=tf.float32, seed=0))
-embd = tf.nn.embedding_lookup(E, x[:, :, 0])
-
-E_type = tf.Variable(tf.random_uniform([typeSize, embedSize], minval=-1, maxval=1, dtype=tf.float32, seed=0))
-embd_type = tf.nn.embedding_lookup(E_type, x[:, :, 1])
-
-E_channel = tf.Variable(tf.random_uniform([channelSize, embedSize], minval=-1, maxval=1, dtype=tf.float32, seed=0))
-embd_channel = tf.nn.embedding_lookup(E_channel, x[:, :, 2])
-
-E_note = tf.Variable(tf.random_uniform([noteSize, embedSize], minval=-1, maxval=1, dtype=tf.float32, seed=0))
-embd_note = tf.nn.embedding_lookup(E_note, x[:, :, 3])
-
-E_velocity = tf.Variable(tf.random_uniform([velocitySize, embedSize], minval=-1, maxval=1, dtype=tf.float32, seed=0))
-embd_velocity = tf.nn.embedding_lookup(E_velocity, x[:, :, 4])
-
-e = tf.concat(2, [embd, embd_type, embd_channel, embd_note, embd_velocity])
+E = make_embeddings(embedSize, [vocabSize, typeSize, channelSize, noteSize, velocitySize])
+e = embeddings_lookup(E, x)
+eDrop = tf.nn.dropout(e, keepProb)
 
 lstmSize = 256
 lstm = tf.nn.rnn_cell.BasicLSTMCell(lstmSize, state_is_tuple=True)
@@ -146,8 +140,6 @@ initialState = lstm.zero_state(batchSize, tf.float32)
 # Forward pass
 W1 = tf.Variable(tf.truncated_normal([lstmSize, vocabSize], stddev=0.1))
 B1 = tf.Variable(tf.constant(0.1, shape=[vocabSize]))
-
-eDrop = tf.nn.dropout(e, keepProb)
 
 rnn, outst = dyrnn = tf.nn.dynamic_rnn(lstm, eDrop, initial_state=initialState)
 rnn2D = tf.reshape(rnn, [-1, lstmSize])
@@ -163,7 +155,7 @@ perplexity = tf.exp(l)
 
 # Setup training
 sess = tf.InteractiveSession()
-trainStep = tf.train.AdamOptimizer(1e-4).minimize(perplexity)
+trainStep = tf.train.AdamOptimizer(1e-3).minimize(perplexity)
 sess.run(tf.initialize_all_variables())
 
 NUM_EPOCHS = 400
@@ -182,8 +174,8 @@ for e in range(NUM_EPOCHS):
 		})
 		X += batchSize*numSteps
 		i += 1
-		if e % 20 == 0:
-			print(e, perp)
+	if e % 20 == 0:
+		print(e, perp)
 
 state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 curr_word_id = 0

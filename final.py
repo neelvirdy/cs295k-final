@@ -8,6 +8,7 @@ import os
 import time
 import datetime
 import random
+from os.path import basename
 from collections import Counter
 
 if len(sys.argv) < 3:
@@ -30,7 +31,8 @@ STOP_TOKEN = 2
 FEATURES_BY_TYPE = {
 	'note_on': {'channel', 'note', 'velocity', 'time'},
 	'control_change': {'channel', 'control', 'value', 'time'},
-	'program_change': {'channel', 'program', 'time'}
+	'program_change': {'channel', 'program', 'time'},
+	'pitchwheel': {'channel', 'pitch', 'time'}
 }
 FEATURES_SET = reduce(set.union, FEATURES_BY_TYPE.values(), {'type'})
 FEATURES = sorted(list(FEATURES_SET))
@@ -75,6 +77,12 @@ def generate_message_from_feature_ids(featureIds):
 			msgType,
 			channel=features['channel'],
 			program=features['program'],
+			time=features['time'])
+	elif msgType is 'pitchwheel':
+		msg = mido.Message(
+			msgType,
+			channel=features['channel'],
+			pitch=features['pitch'],
 			time=features['time'])
 	else:
 		msg = mido.Message(msgType)
@@ -121,7 +129,7 @@ def tokenizeFile(path, songIndex):
 def make_embedding(embedSize, featureSize):
 	return tf.Variable(
 		tf.random_uniform([featureSize, embedSize],
-		minval=-1,
+		minval=0,
 		maxval=1,
 		dtype=tf.float32,
 		seed=0))
@@ -164,9 +172,9 @@ def get_next_token_feature_id(feature, msgType, featureLogits):
 		return NONE_TOKEN
 	logits = featureLogits[0][2:] # Assumes None is 0 and START is 1
 	## Sample from distribution using logits
-	# next_id = sample(logits) + 2 # Assumes None is 0 and START is 1
-	## Pick most likely logit
 	next_id = sample(logits) + 2 # Assumes None is 0 and START is 1
+	## Pick most likely logit
+	# next_id = np.argmax(logits) + 2 # Assumes None is 0 and START is 1
 	return next_id
 
 def get_next_token_feature_ids(batchLogits):
@@ -252,7 +260,7 @@ abs_W_means = [tf.reduce_mean(tf.abs(W)) for W in Ws]
 abs_B_means = [tf.reduce_mean(tf.abs(B)) for B in Bs]
 regularize_W = tf.add_n(abs_W_means)/numFeatures
 regularize_B = tf.add_n(abs_B_means)/numFeatures
-regularization = 10 * regularize_W + 10 * regularize_B
+regularization = 50 * regularize_W + 50 * regularize_B
 
 # Setup training
 sess = tf.InteractiveSession()
@@ -264,7 +272,7 @@ saver = tf.train.Saver()
 if len(sys.argv) > 3:
 	saver.restore(sess, sys.argv[3])
 else:
-	NUM_EPOCHS = 20000
+	NUM_EPOCHS = 1000
 	for e in range(NUM_EPOCHS):
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
@@ -284,7 +292,8 @@ else:
 			print(e, perp, reg)
 	ts = time.time()
 	timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H:%M:%S')
-	save_path = saver.save(sess, "models/%s_%s.ckpt" % (NUM_EPOCHS, timestamp))
+	input_name = basename(sys.argv[1]).split('.')[0]
+	save_path = saver.save(sess, "models/%s_%s_%s.ckpt" % (input_name, NUM_EPOCHS, timestamp))
 	print("Model saved to %s" % save_path)
 
 state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))

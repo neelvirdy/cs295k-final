@@ -122,9 +122,10 @@ def tokenizeFile(path, songIndex):
 		if not isinstance(msg, mido.MetaMessage):
 			if msg.type == 'note_off':
 				msg = mido.Message('note_on', note=msg.note, velocity=0, time=msg.time)
-			msg.time = int(msg.time * 90 * 4 * 2)
-			print(msg)
-			tokenized[songIndex].append(MyMessage(msg))
+			if msg.type in FEATURES_BY_TYPE:
+				msg.time = int(msg.time * 90 * 4 * 2)
+				print(msg)
+				tokenized[songIndex].append(MyMessage(msg))
 
 def make_embedding(embedSize, featureSize):
 	return tf.Variable(

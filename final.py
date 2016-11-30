@@ -19,16 +19,44 @@ class MyMessage:
 	def __init__(self, m):
 		self.mes = m
 
+	def setTime(self, t):
+		self.mes.time = t
+	
 	def __hash__(self):
 		return hash(self.mes.hex()) * 31 + hash(self.mes.time) * 7
 
 	def __str__(self):
 		return str(self.mes)
 
+	def __eq__(self, other):
+		if isinstance(other, self.__class__):
+			return self.__dict__ == other.__dict__
+		else:
+			return False
+	
+	def __ne__(self, other):
+		return not self.__eq__(other)
+
+class Note:
+	def __init__(self, m, t, d, v):
+		self.mes = m
+		self.time = t
+		self.duration = d
+		self.endV = v
+
+	def __hash__(self):
+		return hash(self.mes.hex()) * 31 + hash(self.mes.time) * 7
+
+	def __str__(self):
+		return str(self.mes) + " duration: " + str(self.duration) + " abs time: " + str(self.time) + " end velocity: " + str(self.endV)
+
+
+
 NONE_TOKEN = 0
 START_TOKEN = 1
 STOP_TOKEN = 2
 FEATURES_BY_TYPE = {
+	'note_off': {'channel', 'note', 'velocity', 'time'},
 	'note_on': {'channel', 'note', 'velocity', 'time'},
 	'control_change': {'channel', 'control', 'value', 'time'},
 	'program_change': {'channel', 'program', 'time'},
@@ -52,6 +80,72 @@ init_value_lookup = {
 }
 id_lookup_by_feature = {feature:init_id_lookup.copy() for feature in FEATURES}
 value_lookup_by_feature = {feature:init_value_lookup.copy() for feature in FEATURES}
+
+#mido.Message(msgType, channel, ..., time)
+#msgType is note_on to start, note_on to end, time is diff between events
+
+# message->note
+def generate_noteseq_from_mymessagearray(myMessageArray):
+	noteSeq = []
+	time=0
+	for i in range(len(myMessageArray)):
+		m = myMessageArray[i]
+		if m.mes.type is 'note_on' and m.mes.velocity is 0:
+			myMessageArray[i] = MyMessage(mido.Message('note_off',
+						channel=m.mes.channel,
+						note=m.mes.note,
+						velocity=m.mes.velocity,
+						time=m.mes.time))
+	for i in range(len(myMessageArray)):
+		curr = myMessageArray[i].mes
+		time += curr.time
+		if curr.type is 'note_on':
+			duration = 0
+			for j in range(i+1, len(myMessageArray)):
+				duration += myMessageArray[j].mes.time
+				if myMessageArray[j].mes.type is 'note_off' and curr.note is myMessageArray[j].mes.note and curr.channel is myMessageArray[j].mes.channel:
+					noteSeq += [Note(curr, time, duration, myMessageArray[j].mes.velocity)]
+					break
+		elif curr.type is 'control_change' or curr.type is 'program_change' or curr.type is 'pitchwheel':
+			noteSeq += [Note(curr, time, 0, 0)]
+	return noteSeq
+
+
+def getTime(msg):
+	return msg.mes.time
+
+#Input: A sequence of notes of the format [[msgType, channel, time, duration, note, velocity, control, value, program, pitch], ...]
+#Output: A sequence of myMessages which correspond to the MIDI stream
+def generate_mymessagearray_from_noteseq(noteSeq):
+	myMessageArray = []
+	noteoffs = []
+	for i in range(len(noteSeq)):
+		curr = noteSeq[i]
+		if curr.mes.type is 'note_on':
+			msg = [MyMessage(curr.mes), MyMessage(mido.Message('note_off', 
+						channel=curr.mes.channel, 
+						note=curr.mes.note, 
+						velocity=curr.endV, 
+						time=curr.time+curr.duration))]
+			msg[0].setTime(curr.time)
+		elif curr.mes.type is 'control_change' or curr.mes.type is 'program_change' or curr.mes.type is 'pitchwheel':
+			msg = [MyMessage(curr.mes)]
+			msg[0].setTime(curr.time)
+		myMessageArray += msg
+	
+	
+	myMessageArray = sorted(myMessageArray, key=getTime)
+	
+	for i in range(len(myMessageArray)-1, 0, -1):
+		if i < 1:
+			myMessageArray[i].mes.time = 0
+		else:
+			myMessageArray[i].mes.time = myMessageArray[i].mes.time - myMessageArray[i-1].mes.time
+
+	return myMessageArray
+
+
+
 
 def generate_message_from_feature_ids(featureIds):
 	features = {feature:value_lookup_by_feature[feature][featureIds[i]] for i, feature in FEATURE_BY_ID.items()}
@@ -120,11 +214,10 @@ def tokenizeFile(path, songIndex):
 	tokenized.append(list());
 	for msg in mido.MidiFile(path):
 		if not isinstance(msg, mido.MetaMessage):
-			if msg.type == 'note_off':
-				msg = mido.Message('note_on', note=msg.note, velocity=0, time=msg.time)
+			#if msg.type == 'note_off':
+			#	msg = mido.Message('note_on', note=msg.note, velocity=0, time=msg.time)
 			if msg.type in FEATURES_BY_TYPE:
 				msg.time = int(msg.time * 90 * 4 * 2)
-				print(msg)
 				tokenized[songIndex].append(MyMessage(msg))
 
 def make_embedding(embedSize, featureSize):
@@ -192,6 +285,7 @@ def save_output(out_path, msgs):
 	track = mido.MidiTrack()
 	mid.tracks.append(track)
 	track.append(mido.Message('program_change', program=0, time=0))
+	mid.ticks_per_beat = 300
 	for msg in msgs:
 		track.append(msg.mes)
 	mid.save(out_path)
@@ -218,99 +312,123 @@ for word in counts:
 	lookup[index] = word
 	index += 1
 
+
 # Build train/test int lists
 trainInts1 = list()
 trainFeatures1 = list()
 for song in tokenized:
-	trainInts1.append(START_TOKEN)
-	trainFeatures1.append(extract_features(START_TOKEN))
-	for word in song:
-		trainInts1.append(vocab[word])
-		trainFeatures1.append(extract_features(word))
-	trainInts1.append(STOP_TOKEN) # append STOP_TOKEN token
-	trainFeatures1.append(extract_features(STOP_TOKEN))
-trainInts = np.array(trainInts1)
-trainFeatures = np.array(trainFeatures1)
+	b = True
+	newsong = generate_mymessagearray_from_noteseq(generate_noteseq_from_mymessagearray(song))
+	#newsong = song
+	barr = []
+	for i in range(len(newsong)):
+		if i >= len(song):
+			break
+		#print("i: " + str(i))
+		#print("song: " + str(song[i]))
+		#print("nsng: " + str(newsong[i]))
+		if song[i] != newsong[i]:
+			barr.append(i)
+			b = False
+	print(b)
+	print(barr)
+	save_output(sys.argv[2], newsong)
 
-# Inputs and outputs
-batchSize = 4
-numSteps = 16
-x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
-y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
-keepProb = tf.placeholder(tf.float32)
+# 	trainInts1.append(START_TOKEN)
+# 	trainFeatures1.append(extract_features(START_TOKEN))
+# 	for word in song:
+# 		trainInts1.append(vocab[word])
+# 		trainFeatures1.append(extract_features(word))
+# 	trainInts1.append(STOP_TOKEN) # append STOP_TOKEN token
+# 	trainFeatures1.append(extract_features(STOP_TOKEN))
+# trainInts = np.array(trainInts1)
+# trainFeatures = np.array(trainFeatures1)
 
-featureSizes = [len(id_lookup_by_feature[feature]) for feature in FEATURES]
 
-# Embedding matrix
-embedSize = 64
-E = make_embeddings(embedSize, featureSizes)
-e = embeddings_lookup(E, x)
-eDrop = tf.nn.dropout(e, keepProb)
 
-lstmSize = 256
-lstm = tf.nn.rnn_cell.BasicLSTMCell(lstmSize, state_is_tuple=True)
-initialState = lstm.zero_state(batchSize, tf.float32)
 
-rnn, outst = dyrnn = tf.nn.dynamic_rnn(lstm, eDrop, initial_state=initialState)
-rnn2D = tf.reshape(rnn, [-1, lstmSize])
+# # Inputs and outputs
+# batchSize = 4
+# numSteps = 16
+# x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
+# y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
+# keepProb = tf.placeholder(tf.float32)
 
-Ws, Bs, logits, losses = make_feature_predictors(lstmSize, rnn2D, y, featureSizes)
-avg_loss = tf.reduce_sum(losses)/(batchSize*numSteps)
-perplexity = tf.exp(avg_loss)
-abs_W_means = [tf.reduce_mean(tf.abs(W)) for W in Ws]
-abs_B_means = [tf.reduce_mean(tf.abs(B)) for B in Bs]
-regularize_W = tf.add_n(abs_W_means)/numFeatures
-regularize_B = tf.add_n(abs_B_means)/numFeatures
-regularization = 50 * regularize_W + 50 * regularize_B
+# featureSizes = [len(id_lookup_by_feature[feature]) for feature in FEATURES]
+
+# # Embedding matrix
+# embedSize = 64
+# E = make_embeddings(embedSize, featureSizes)
+# e = embeddings_lookup(E, x)
+# eDrop = tf.nn.dropout(e, keepProb)
+
+# lstmSize = 256
+# lstm = tf.nn.rnn_cell.BasicLSTMCell(lstmSize, state_is_tuple=True)
+# initialState = lstm.zero_state(batchSize, tf.float32)
+
+# rnn, outst = dyrnn = tf.nn.dynamic_rnn(lstm, eDrop, initial_state=initialState)
+# rnn2D = tf.reshape(rnn, [-1, lstmSize])
+
+# Ws, Bs, logits, losses = make_feature_predictors(lstmSize, rnn2D, y, featureSizes)
+# avg_loss = tf.reduce_sum(losses)/(batchSize*numSteps)
+# perplexity = tf.exp(avg_loss)
+# abs_W_means = [tf.reduce_mean(tf.abs(W)) for W in Ws]
+# abs_B_means = [tf.reduce_mean(tf.abs(B)) for B in Bs]
+# regularize_W = tf.add_n(abs_W_means)/numFeatures
+# regularize_B = tf.add_n(abs_B_means)/numFeatures
+# regularization = 50 * regularize_W + 50 * regularize_B
 
 # Setup training
-sess = tf.InteractiveSession()
-trainStep = tf.train.AdamOptimizer(1e-2).minimize(perplexity + regularization)
-sess.run(tf.initialize_all_variables())
+# sess = tf.InteractiveSession()
+# trainStep = tf.train.AdamOptimizer(1e-2).minimize(perplexity + regularization)
+# sess.run(tf.initialize_all_variables())
 
-saver = tf.train.Saver()
+# saver = tf.train.Saver()
 
-if len(sys.argv) > 3:
-	saver.restore(sess, sys.argv[3])
-else:
-	NUM_EPOCHS = 1000
-	for e in range(NUM_EPOCHS):
-		i = 0
-		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
-		X = 0
-		while X + batchSize * numSteps + 1 <= len(trainInts):
-			batch_x, batch_y = next_batch(trainInts, trainFeatures, i, batchSize, numSteps)
-			state, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
-			feed_dict={
-				x: batch_x,
-				y: batch_y,
-				keepProb: 0.5,
-				initialState: state
-			})
-			X += batchSize*numSteps
-			i += 1
-		if e % 20 == 0:
-			print(e, perp, reg)
-	ts = time.time()
-	timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H:%M:%S')
-	input_name = basename(sys.argv[1]).split('.')[0]
-	save_path = saver.save(sess, "models/%s_%s_%s.ckpt" % (input_name, NUM_EPOCHS, timestamp))
-	print("Model saved to %s" % save_path)
+# if len(sys.argv) > 3:
+# 	saver.restore(sess, sys.argv[3])
+# else:
+# 	NUM_EPOCHS = 1000
+# 	for e in range(NUM_EPOCHS):
+# 		i = 0
+# 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
+# 		X = 0
+# 		while X + batchSize * numSteps + 1 <= len(trainInts):
+# 			batch_x, batch_y = next_batch(trainInts, trainFeatures, i, batchSize, numSteps)
+# 			state, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
+# 			feed_dict={
+# 				x: batch_x,
+# 				y: batch_y,
+# 				keepProb: 0.5,
+# 				initialState: state
+# 			})
+# 			X += batchSize*numSteps
+# 			i += 1
+# 		if e % 20 == 0:
+# 			print(e, perp, reg)
+# 	ts = time.time()
+# 	timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H:%M:%S')
+# 	input_name = basename(sys.argv[1]).split('.')[0]
+# 	save_path = saver.save(sess, "models/%s_%s_%s.ckpt" % (input_name, NUM_EPOCHS, timestamp))
+# 	print("Model saved to %s" % save_path)
 
-state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
-genMsgs = list()
-nextToken = START_TOKEN
-i = 0
-while nextToken != STOP_TOKEN:
-	tokenFeatures = extract_features(nextToken)
-	currFeatures = np.tile(tokenFeatures, (batchSize, 1, 1))
-	state, batchLogits = sess.run([outst, logits],
-		feed_dict={x: currFeatures, keepProb: 1.0, initialState: state})
-	nextFeatureIds = get_next_token_feature_ids(batchLogits)
-	nextToken = generate_message_from_feature_ids(nextFeatureIds)
-	if nextToken != STOP_TOKEN:
-		print nextToken
-		genMsgs.append(nextToken)
-	i += 1
+# state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
+# genMsgs = list()
+# nextToken = START_TOKEN
+# i = 0
+# while nextToken != STOP_TOKEN:
+# 	tokenFeatures = extract_features(nextToken)
+# 	currFeatures = np.tile(tokenFeatures, (batchSize, 1, 1))
+# 	state, batchLogits = sess.run([outst, logits],
+# 		feed_dict={x: currFeatures, keepProb: 1.0, initialState: state})
+# 	nextFeatureIds = get_next_token_feature_ids(batchLogits)
+# 	nextToken = generate_message_from_feature_ids(nextFeatureIds)
+# 	if nextToken != STOP_TOKEN:
+# 		print nextToken
+# 		genMsgs.append(nextToken)
+# 	i += 1
 
-save_output(sys.argv[2], genMsgs)
+#save_output(sys.argv[2], genMsgs)
+
+
+

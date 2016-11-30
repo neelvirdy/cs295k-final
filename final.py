@@ -40,29 +40,27 @@ class MyMessage:
 class Note:
 	def __init__(self, m, t, d, v):
 		self.mes = m
-		self.time = t
+		self.absTime = t
 		self.duration = d
 		self.endV = v
 
 	def __hash__(self):
-		return hash(self.mes.hex()) * 31 + hash(self.mes.time) * 7
+		return hash(self.mes.mes.hex()) * 31 + hash(self.mes.time) * 7
 
 	def __str__(self):
 		return str(self.mes) + " duration: " + str(self.duration) + " abs time: " + str(self.time) + " end velocity: " + str(self.endV)
-
 
 
 NONE_TOKEN = 0
 START_TOKEN = 1
 STOP_TOKEN = 2
 FEATURES_BY_TYPE = {
-	'note_off': {'channel', 'note', 'velocity', 'time'},
 	'note_on': {'channel', 'note', 'velocity', 'time'},
 	'control_change': {'channel', 'control', 'value', 'time'},
 	'program_change': {'channel', 'program', 'time'},
 	'pitchwheel': {'channel', 'pitch', 'time'}
 }
-FEATURES_SET = reduce(set.union, FEATURES_BY_TYPE.values(), {'type'})
+FEATURES_SET = reduce(set.union, FEATURES_BY_TYPE.values(), {'type', 'duration'})
 FEATURES = sorted(list(FEATURES_SET))
 ID_BY_FEATURE = {feature:i for i, feature in enumerate(FEATURES)}
 FEATURE_BY_ID = {i:feature for i, feature in enumerate(FEATURES)}
@@ -145,11 +143,10 @@ def generate_mymessagearray_from_noteseq(noteSeq):
 	return myMessageArray
 
 
-
-
 def generate_message_from_feature_ids(featureIds):
 	features = {feature:value_lookup_by_feature[feature][featureIds[i]] for i, feature in FEATURE_BY_ID.items()}
 	msgType = features['type']
+	endV = 0
 	if msgType is STOP_TOKEN:
 		return STOP_TOKEN
 	if msgType is 'note_on':
@@ -159,6 +156,7 @@ def generate_message_from_feature_ids(featureIds):
 			note=features['note'],
 			velocity=features['velocity'],
 			time=features['time'])
+		endV = features['velocity']
 	elif msgType is 'control_change':
 		msg = mido.Message(
 			msgType,
@@ -180,7 +178,7 @@ def generate_message_from_feature_ids(featureIds):
 			time=features['time'])
 	else:
 		msg = mido.Message(msgType)
-	return MyMessage(msg)
+	return Note(MyMessage(msg), None, features['duration'], endV);
 
 def extract_features(message):
 	if isinstance(message, int) and (message == START_TOKEN or message == STOP_TOKEN):
@@ -300,7 +298,7 @@ else:
 	tokenizeFile(sys.argv[1], 0)
 
 # Convert the messages to ints
-counts = Counter([msg for song in tokenized for msg in song])
+counts = Counter([msg for song in tokenized for msg in generate_noteseq_from_mymessagearray(song)])
 vocab = dict()
 lookup = dict()
 lookup[START_TOKEN] = START_TOKEN
@@ -317,118 +315,118 @@ for word in counts:
 trainInts1 = list()
 trainFeatures1 = list()
 for song in tokenized:
-	b = True
-	newsong = generate_mymessagearray_from_noteseq(generate_noteseq_from_mymessagearray(song))
-	#newsong = song
-	barr = []
-	for i in range(len(newsong)):
-		if i >= len(song):
-			break
-		#print("i: " + str(i))
-		#print("song: " + str(song[i]))
-		#print("nsng: " + str(newsong[i]))
-		if song[i] != newsong[i]:
-			barr.append(i)
-			b = False
-	print(b)
-	print(barr)
-	save_output(sys.argv[2], newsong)
+	newsong = generate_noteseq_from_mymessagearray(song)
+	# b = True
+	# barr = []
+	# for i in range(len(newsong)):
+	# 	if i >= len(song):
+	# 		break
+	# 	#print("i: " + str(i))
+	# 	#print("song: " + str(song[i]))
+	# 	#print("nsng: " + str(newsong[i]))
+	# 	if song[i] != newsong[i]:
+	# 		barr.append(i)
+	# 		b = False
+	# print(b)
+	# print(barr)
+	# save_output(sys.argv[2], newsong)
 
-# 	trainInts1.append(START_TOKEN)
-# 	trainFeatures1.append(extract_features(START_TOKEN))
-# 	for word in song:
-# 		trainInts1.append(vocab[word])
-# 		trainFeatures1.append(extract_features(word))
-# 	trainInts1.append(STOP_TOKEN) # append STOP_TOKEN token
-# 	trainFeatures1.append(extract_features(STOP_TOKEN))
-# trainInts = np.array(trainInts1)
-# trainFeatures = np.array(trainFeatures1)
+	trainInts1.append(START_TOKEN)
+	trainFeatures1.append(extract_features(START_TOKEN))
+	for word in newsong:
+		trainInts1.append(vocab[word])
+		trainFeatures1.append(extract_features(word))
+	trainInts1.append(STOP_TOKEN) # append STOP_TOKEN token
+	trainFeatures1.append(extract_features(STOP_TOKEN))
+trainInts = np.array(trainInts1)
+trainFeatures = np.array(trainFeatures1)
 
+# Inputs and outputs
+batchSize = 4
+numSteps = 16
+x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
+y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
+keepProb = tf.placeholder(tf.float32)
 
+featureSizes = [len(id_lookup_by_feature[feature]) for feature in FEATURES]
 
+# Embedding matrix
+embedSize = 64
+E = make_embeddings(embedSize, featureSizes)
+e = embeddings_lookup(E, x)
+eDrop = tf.nn.dropout(e, keepProb)
 
-# # Inputs and outputs
-# batchSize = 4
-# numSteps = 16
-# x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
-# y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
-# keepProb = tf.placeholder(tf.float32)
+lstmSize = 256
+lstm = tf.nn.rnn_cell.BasicLSTMCell(lstmSize, state_is_tuple=True)
+initialState = lstm.zero_state(batchSize, tf.float32)
 
-# featureSizes = [len(id_lookup_by_feature[feature]) for feature in FEATURES]
+rnn, outst = dyrnn = tf.nn.dynamic_rnn(lstm, eDrop, initial_state=initialState)
+rnn2D = tf.reshape(rnn, [-1, lstmSize])
 
-# # Embedding matrix
-# embedSize = 64
-# E = make_embeddings(embedSize, featureSizes)
-# e = embeddings_lookup(E, x)
-# eDrop = tf.nn.dropout(e, keepProb)
+Ws, Bs, logits, losses = make_feature_predictors(lstmSize, rnn2D, y, featureSizes)
+avg_loss = tf.reduce_sum(losses)/(batchSize*numSteps)
+perplexity = tf.exp(avg_loss)
+abs_W_means = [tf.reduce_mean(tf.abs(W)) for W in Ws]
+abs_B_means = [tf.reduce_mean(tf.abs(B)) for B in Bs]
+regularize_W = tf.add_n(abs_W_means)/numFeatures
+regularize_B = tf.add_n(abs_B_means)/numFeatures
+regularization = 50 * regularize_W + 50 * regularize_B
 
-# lstmSize = 256
-# lstm = tf.nn.rnn_cell.BasicLSTMCell(lstmSize, state_is_tuple=True)
-# initialState = lstm.zero_state(batchSize, tf.float32)
+Setup training
+sess = tf.InteractiveSession()
+trainStep = tf.train.AdamOptimizer(1e-2).minimize(perplexity + regularization)
+sess.run(tf.initialize_all_variables())
 
-# rnn, outst = dyrnn = tf.nn.dynamic_rnn(lstm, eDrop, initial_state=initialState)
-# rnn2D = tf.reshape(rnn, [-1, lstmSize])
+saver = tf.train.Saver()
 
-# Ws, Bs, logits, losses = make_feature_predictors(lstmSize, rnn2D, y, featureSizes)
-# avg_loss = tf.reduce_sum(losses)/(batchSize*numSteps)
-# perplexity = tf.exp(avg_loss)
-# abs_W_means = [tf.reduce_mean(tf.abs(W)) for W in Ws]
-# abs_B_means = [tf.reduce_mean(tf.abs(B)) for B in Bs]
-# regularize_W = tf.add_n(abs_W_means)/numFeatures
-# regularize_B = tf.add_n(abs_B_means)/numFeatures
-# regularization = 50 * regularize_W + 50 * regularize_B
+if len(sys.argv) > 3:
+	saver.restore(sess, sys.argv[3])
+else:
+	NUM_EPOCHS = 1000
+	for e in range(NUM_EPOCHS):
+		i = 0
+		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
+		X = 0
+		while X + batchSize * numSteps + 1 <= len(trainInts):
+			batch_x, batch_y = next_batch(trainInts, trainFeatures, i, batchSize, numSteps)
+			state, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
+			feed_dict={
+				x: batch_x,
+				y: batch_y,
+				keepProb: 0.5,
+				initialState: state
+			})
+			X += batchSize*numSteps
+			i += 1
+		if e % 20 == 0:
+			print(e, perp, reg)
+	ts = time.time()
+	timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H_%M_%S')
+	input_name = basename(sys.argv[1]).split('.')[0]
+	save_path = saver.save(sess, "models/%s_%s_%s.ckpt" % (input_name, NUM_EPOCHS, timestamp))
+	print("Model saved to %s" % save_path)
 
-# Setup training
-# sess = tf.InteractiveSession()
-# trainStep = tf.train.AdamOptimizer(1e-2).minimize(perplexity + regularization)
-# sess.run(tf.initialize_all_variables())
+state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
+genNotes = list()
+nextToken = START_TOKEN
+i = 0
+while nextToken != STOP_TOKEN:
+	tokenFeatures = extract_features(nextToken)
+	currFeatures = np.tile(tokenFeatures, (batchSize, 1, 1))
+	state, batchLogits = sess.run([outst, logits],
+		feed_dict={x: currFeatures, keepProb: 1.0, initialState: state})
+	nextFeatureIds = get_next_token_feature_ids(batchLogits)
+	nextToken = generate_message_from_feature_ids(nextFeatureIds)
+	if nextToken != STOP_TOKEN:
+		print nextToken
+		genNotes.append(nextToken)
+	i += 1
 
-# saver = tf.train.Saver()
+absTime = 0
+for note in genNotes:
+	note.absTime = absTime
+	absTime += note.mes.mes.time
 
-# if len(sys.argv) > 3:
-# 	saver.restore(sess, sys.argv[3])
-# else:
-# 	NUM_EPOCHS = 1000
-# 	for e in range(NUM_EPOCHS):
-# 		i = 0
-# 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
-# 		X = 0
-# 		while X + batchSize * numSteps + 1 <= len(trainInts):
-# 			batch_x, batch_y = next_batch(trainInts, trainFeatures, i, batchSize, numSteps)
-# 			state, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
-# 			feed_dict={
-# 				x: batch_x,
-# 				y: batch_y,
-# 				keepProb: 0.5,
-# 				initialState: state
-# 			})
-# 			X += batchSize*numSteps
-# 			i += 1
-# 		if e % 20 == 0:
-# 			print(e, perp, reg)
-# 	ts = time.time()
-# 	timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H:%M:%S')
-# 	input_name = basename(sys.argv[1]).split('.')[0]
-# 	save_path = saver.save(sess, "models/%s_%s_%s.ckpt" % (input_name, NUM_EPOCHS, timestamp))
-# 	print("Model saved to %s" % save_path)
+genMsgs = generate_mymessagearray_from_noteseq(genNotes)
 
-# state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
-# genMsgs = list()
-# nextToken = START_TOKEN
-# i = 0
-# while nextToken != STOP_TOKEN:
-# 	tokenFeatures = extract_features(nextToken)
-# 	currFeatures = np.tile(tokenFeatures, (batchSize, 1, 1))
-# 	state, batchLogits = sess.run([outst, logits],
-# 		feed_dict={x: currFeatures, keepProb: 1.0, initialState: state})
-# 	nextFeatureIds = get_next_token_feature_ids(batchLogits)
-# 	nextToken = generate_message_from_feature_ids(nextFeatureIds)
-# 	if nextToken != STOP_TOKEN:
-# 		print nextToken
-# 		genMsgs.append(nextToken)
-# 	i += 1
-
-#save_output(sys.argv[2], genMsgs)
-
-
-
+save_output(sys.argv[2], genMsgs)

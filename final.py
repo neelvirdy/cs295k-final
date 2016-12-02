@@ -427,6 +427,6 @@ for note in genNotes:
 	note.absTime = absTime
 	absTime += note.mes.time
 
-genMsgs = generate_msgArray_from_noteseq(genNotes)
+genMsgs = generate_msgarray_from_noteseq(genNotes)
 
 save_output(sys.argv[2], genMsgs)

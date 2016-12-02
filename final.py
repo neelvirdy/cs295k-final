@@ -48,7 +48,7 @@ START_TOKEN = 1
 STOP_TOKEN = 2
 FEATURES_BY_TYPE = {
 	'note_on': {'channel', 'note', 'velocity', 'time'},
-	'control_change': {'channel', 'control', 'value', 'time'},
+	# 'control_change': {'channel', 'control', 'value', 'time'},
 	'program_change': {'channel', 'program', 'time'},
 	'pitchwheel': {'channel', 'pitch', 'time'},
 	'note_off': {'channel', 'note', 'velocity', 'time'}
@@ -114,17 +114,16 @@ def generate_msgarray_from_noteseq(noteSeq):
 	for i in range(len(noteSeq)):
 		curr = noteSeq[i]
 		if curr.mes.type is 'note_on':
+			curr.mes.time = curr.time
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,
 						velocity=curr.endV,
 						time=curr.time+curr.duration)]
-			msg[0].setTime(curr.time)
 		elif curr.mes.type is 'control_change' or curr.mes.type is 'program_change' or curr.mes.type is 'pitchwheel':
+			curr.mes.time = curr.time
 			msg = [curr.mes]
-			msg[0].setTime(curr.time)
 		msgArray += msg
-
 
 	msgArray = sorted(msgArray, key=getTime)
 
@@ -342,8 +341,8 @@ trainInts = np.array(trainInts1)
 trainFeatures = np.array(trainFeatures1)
 
 # Inputs and outputs
-batchSize = 4
-numSteps = 16
+batchSize = 8
+numSteps = 4
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 keepProb = tf.placeholder(tf.float32)
@@ -351,7 +350,7 @@ keepProb = tf.placeholder(tf.float32)
 featureSizes = [len(id_lookup_by_feature[feature]) for feature in FEATURES]
 
 # Embedding matrix
-embedSize = 256
+embedSize = 128
 E = make_embeddings(embedSize, featureSizes)
 e = embeddings_lookup(E, x)
 eDrop = tf.nn.dropout(e, keepProb)
@@ -426,7 +425,7 @@ while nextToken != STOP_TOKEN:
 absTime = 0
 for note in genNotes:
 	note.absTime = absTime
-	absTime += note.mes.mes.time
+	absTime += note.mes.time
 
 genMsgs = generate_msgArray_from_noteseq(genNotes)
 

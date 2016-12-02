@@ -45,10 +45,13 @@ class Note:
 		self.endV = v
 
 	def __hash__(self):
-		return hash(self.mes.mes.hex()) * 31 + hash(self.mes.time) * 7
+		# print self.mes.hex()
+		# print self.duration
+		# print hash(self.mes.hex()) * 31 + hash(self.duration) * 7
+		return abs(hash(self.mes.hex())) * 31 + self.duration * 7
 
 	def __str__(self):
-		return str(self.mes) + " duration: " + str(self.duration) + " abs time: " + str(self.time) + " end velocity: " + str(self.endV)
+		return str(self.mes) + " duration: " + str(self.duration) + " abs time: " + str(self.absTime) + " end velocity: " + str(self.endV)
 
 
 NONE_TOKEN = 0
@@ -58,7 +61,8 @@ FEATURES_BY_TYPE = {
 	'note_on': {'channel', 'note', 'velocity', 'time'},
 	'control_change': {'channel', 'control', 'value', 'time'},
 	'program_change': {'channel', 'program', 'time'},
-	'pitchwheel': {'channel', 'pitch', 'time'}
+	'pitchwheel': {'channel', 'pitch', 'time'},
+	'note_off': {'channel', 'note', 'velocity', 'time'}
 }
 FEATURES_SET = reduce(set.union, FEATURES_BY_TYPE.values(), {'type', 'duration'})
 FEATURES = sorted(list(FEATURES_SET))
@@ -86,6 +90,8 @@ value_lookup_by_feature = {feature:init_value_lookup.copy() for feature in FEATU
 def generate_noteseq_from_mymessagearray(myMessageArray):
 	noteSeq = []
 	time=0
+	# for mes in myMessageArray:
+	# 	print mes
 	for i in range(len(myMessageArray)):
 		m = myMessageArray[i]
 		if m.mes.type is 'note_on' and m.mes.velocity is 0:
@@ -94,6 +100,7 @@ def generate_noteseq_from_mymessagearray(myMessageArray):
 						note=m.mes.note,
 						velocity=m.mes.velocity,
 						time=m.mes.time))
+	
 	for i in range(len(myMessageArray)):
 		curr = myMessageArray[i].mes
 		time += curr.time
@@ -106,6 +113,8 @@ def generate_noteseq_from_mymessagearray(myMessageArray):
 					break
 		elif curr.type is 'control_change' or curr.type is 'program_change' or curr.type is 'pitchwheel':
 			noteSeq += [Note(curr, time, 0, 0)]
+	# for note in noteSeq:
+	# 	print str(note.mes.type) + ' ' + str(note.duration)
 	return noteSeq
 
 
@@ -211,6 +220,7 @@ def next_batch(token_ids, features, i, batch_size, num_steps):
 def tokenizeFile(path, songIndex):
 	tokenized.append(list());
 	for msg in mido.MidiFile(path):
+		# print msg
 		if not isinstance(msg, mido.MetaMessage):
 			#if msg.type == 'note_off':
 			#	msg = mido.Message('note_on', note=msg.note, velocity=0, time=msg.time)
@@ -297,7 +307,7 @@ if os.path.isdir(sys.argv[1]):
 else:
 	tokenizeFile(sys.argv[1], 0)
 
-# Convert the messages to ints
+# Convert the notes to ints
 counts = Counter([msg for song in tokenized for msg in generate_noteseq_from_mymessagearray(song)])
 vocab = dict()
 lookup = dict()
@@ -306,6 +316,7 @@ lookup[STOP_TOKEN] = STOP_TOKEN
 vocabSize = len(counts)+2 # include START_TOKEN/STOP_TOKEN
 index = 2 # account for START_TOKEN (0) and STOP_TOKEN (1)
 for word in counts:
+	print word
 	vocab[word] = index
 	lookup[index] = word
 	index += 1
@@ -315,6 +326,7 @@ for word in counts:
 trainInts1 = list()
 trainFeatures1 = list()
 for song in tokenized:
+	print song[0]
 	newsong = generate_noteseq_from_mymessagearray(song)
 	# b = True
 	# barr = []
@@ -334,6 +346,9 @@ for song in tokenized:
 	trainInts1.append(START_TOKEN)
 	trainFeatures1.append(extract_features(START_TOKEN))
 	for word in newsong:
+		# print word
+		# print vocab[word]
+
 		trainInts1.append(vocab[word])
 		trainFeatures1.append(extract_features(word))
 	trainInts1.append(STOP_TOKEN) # append STOP_TOKEN token
@@ -372,7 +387,7 @@ regularize_W = tf.add_n(abs_W_means)/numFeatures
 regularize_B = tf.add_n(abs_B_means)/numFeatures
 regularization = 50 * regularize_W + 50 * regularize_B
 
-Setup training
+# Setup training
 sess = tf.InteractiveSession()
 trainStep = tf.train.AdamOptimizer(1e-2).minimize(perplexity + regularization)
 sess.run(tf.initialize_all_variables())

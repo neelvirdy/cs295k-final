@@ -21,14 +21,11 @@ class Note:
 	def __init__(self, m, t, d, v):
 		self.mes = m
 		self.absTime = t
-		self.duration = d
+		self.duration = d or 0
 		self.endV = v
 
 	def __hash__(self):
-		# print self.mes.hex()
-		# print self.duration
-		# print hash(self.mes.hex()) * 31 + hash(self.duration) * 7
-		return abs(hash(self.mes.hex())) * 31 + self.duration * 7 + self.mes.time * 97
+		return abs(hash(self.mes)) * 31 + self.duration * 7 + self.mes.time * 97
 
 	def __str__(self):
 		return str(self.mes) + " duration: " + str(self.duration) + " abs time: " + str(self.absTime) + " end velocity: " + str(self.endV)
@@ -106,6 +103,9 @@ def generate_noteseq_from_msgarray(msgArray):
 	# 	print str(note.type) + ' ' + str(note.duration)
 	return noteSeq
 
+def getTime(msg):
+	return msg.time
+
 #Input: A sequence of notes of the format [[msgType, channel, time, duration, note, velocity, control, value, program, pitch], ...]
 #Output: A sequence of myMessages which correspond to the MIDI stream
 def generate_msgarray_from_noteseq(noteSeq):
@@ -114,14 +114,12 @@ def generate_msgarray_from_noteseq(noteSeq):
 	for i in range(len(noteSeq)):
 		curr = noteSeq[i]
 		if curr.mes.type is 'note_on':
-			curr.mes.time = curr.time
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,
 						velocity=curr.endV,
-						time=curr.time+curr.duration)]
+						time=curr.mes.time+curr.duration)]
 		elif curr.mes.type is 'control_change' or curr.mes.type is 'program_change' or curr.mes.type is 'pitchwheel':
-			curr.mes.time = curr.time
 			msg = [curr.mes]
 		msgArray += msg
 
@@ -279,7 +277,7 @@ def save_output(out_path, msgs):
 	track.append(mido.Message('program_change', program=0, time=0))
 	mid.ticks_per_beat = 300
 	for msg in msgs:
-		track.append(msg.mes)
+		track.append(msg)
 	mid.save(out_path)
 
 tokenized = list()
@@ -381,7 +379,7 @@ saver = tf.train.Saver()
 if len(sys.argv) > 3:
 	saver.restore(sess, sys.argv[3])
 else:
-	NUM_EPOCHS = 5000
+	NUM_EPOCHS = 8000
 	for e in range(NUM_EPOCHS):
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))

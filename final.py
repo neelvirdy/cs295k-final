@@ -43,14 +43,15 @@ class Note:
 NONE_TOKEN = 0
 START_TOKEN = 1
 STOP_TOKEN = 2
+SHARED_FEATURES = {'type', 'time'}
 FEATURES_BY_TYPE = {
-	'note_on': {'channel', 'note', 'velocity', 'time'},
-	# 'control_change': {'channel', 'control', 'value', 'time'},
-	'program_change': {'channel', 'program', 'time'},
-	'pitchwheel': {'channel', 'pitch', 'time'},
-	'note_off': {'channel', 'note', 'velocity', 'time'}
+	'note_on': {'channel', 'note', 'velocity', 'duration'} | SHARED_FEATURES,
+	'control_change': {'channel', 'control', 'value'} | SHARED_FEATURES,
+	'program_change': {'channel', 'program'} | SHARED_FEATURES,
+	'pitchwheel': {'channel', 'pitch'} | SHARED_FEATURES,
+	'note_off': {'channel', 'note', 'velocity'} | SHARED_FEATURES,
 }
-FEATURES_SET = reduce(set.union, FEATURES_BY_TYPE.values(), {'type', 'duration'})
+FEATURES_SET = reduce(set.union, FEATURES_BY_TYPE.values())
 FEATURES = sorted(list(FEATURES_SET))
 ID_BY_FEATURE = {feature:i for i, feature in enumerate(FEATURES)}
 FEATURE_BY_ID = {i:feature for i, feature in enumerate(FEATURES)}
@@ -202,7 +203,6 @@ def next_batch(token_ids, features, i, batch_size, num_steps):
 def tokenizeFile(path, songIndex):
 	tokenized.append(list());
 	for msg in mido.MidiFile(path):
-		# print msg
 		if not isinstance(msg, mido.MetaMessage):
 			#if msg.type == 'note_off':
 			#	msg = mido.Message('note_on', note=msg.note, velocity=0, time=msg.time)
@@ -263,7 +263,6 @@ def get_next_token_feature_id(feature, msgType, featureLogits):
 
 def get_next_token_feature_ids(batchLogits):
 	typeFeatureId = ID_BY_FEATURE['type']
-	# print batchLogits[typeFeatureId][0][2:]
 	msgTypeId = sample(batchLogits[typeFeatureId][0][2:]) + 2 # Assumes None is 0 and START is 1
 	msgType = value_lookup_by_feature['type'][msgTypeId]
 	featureIds = [get_next_token_feature_id(feature, msgType, batchLogits[i]) for i, feature in FEATURE_BY_ID.items()]
@@ -339,7 +338,7 @@ trainInts = np.array(trainInts1)
 trainFeatures = np.array(trainFeatures1)
 
 # Inputs and outputs
-batchSize = 8
+batchSize = 2
 numSteps = 4
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
@@ -379,7 +378,7 @@ saver = tf.train.Saver()
 if len(sys.argv) > 3:
 	saver.restore(sess, sys.argv[3])
 else:
-	NUM_EPOCHS = 8000
+	NUM_EPOCHS = 2000
 	for e in range(NUM_EPOCHS):
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
@@ -416,7 +415,6 @@ while nextToken != STOP_TOKEN:
 	nextFeatureIds = get_next_token_feature_ids(batchLogits)
 	nextToken = generate_message_from_feature_ids(nextFeatureIds)
 	if nextToken != STOP_TOKEN:
-		print nextToken
 		genNotes.append(nextToken)
 	i += 1
 
@@ -426,5 +424,8 @@ for note in genNotes:
 	absTime += note.mes.time
 
 genMsgs = generate_msgarray_from_noteseq(genNotes)
+
+for msg in genMsgs:
+	print msg
 
 save_output(sys.argv[2], genMsgs)

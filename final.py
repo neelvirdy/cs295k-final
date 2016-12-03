@@ -146,11 +146,12 @@ def generate_msgarray_from_noteseq(noteSeq):
 			key = get_note_id(curr.mes.key)
 		if curr.mes.type is 'note_on':
 			curr.mes.note = get_note(key, curr.octave, curr.interval)
+			time = mido.bpm2tempo(medianTempo) * (curr.mes.time + curr.duration) / medianTicksPerBeat
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,
 						velocity=curr.endV,
-						time=curr.mes.time+curr.duration)]
+						time=time)]
 		elif curr.mes.type is 'control_change' or curr.mes.type is 'program_change' or curr.mes.type is 'pitchwheel':
 			msg = [curr.mes]
 		msgArray += msg
@@ -261,25 +262,6 @@ def get_note_id(key):
 	note_id = note_id_by_name[note_name]
 	return note_id
 
-def tokenizeFile(path, songIndex):
-	tokenized.append(list())
-	newSong = list()
-	tempo = 120
-	midoFile = mido.MidiFile(path)
-	ticksPerBeat = midoFile.ticks_per_beat
-	for msg in midoFile:
-		if msg.type in FEATURES_BY_TYPE:
-			if msg.type is 'set_tempo':
-				tempo = mido.tempo2bpm(msg.tempo)
-			if hasattr(msg, 'time'):
-				# convert from seconds to ticks
-				msg.time = int(msg.time / tempo * ticksPerBeat)
-			if hasattr(msg, 'velocity'):
-				msg.velocity = int(msg.velocity / 5) * 5
-			print msg
-			newSong.append(msg)
-	tokenized[songIndex] = generate_noteseq_from_msgarray(newSong)
-
 def make_embedding(embedSize, featureSize):
 	return tf.Variable(
 		tf.random_uniform([featureSize, embedSize],
@@ -339,15 +321,43 @@ def get_next_token_feature_ids(batchLogits):
 	featureIds[typeFeatureId] = msgTypeId
 	return featureIds
 
+trainTempos = []
+medianTempo = 120
+trainTicksPerBeat = []
+medianTicksPerBeat = 480
+
 def save_output(out_path, msgs):
 	mid = mido.MidiFile()
 	track = mido.MidiTrack()
 	mid.tracks.append(track)
 	track.append(mido.Message('program_change', program=0, time=0))
-	mid.ticks_per_beat = 300
+	tempo = mido.bpm2tempo(medianTempo)
+	track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
+	mid.ticks_per_beat = medianTicksPerBeat
 	for msg in msgs:
 		track.append(msg)
 	mid.save(out_path)
+
+def tokenizeFile(path, songIndex):
+	tokenized.append(list())
+	newSong = list()
+	tempo = 120
+	midoFile = mido.MidiFile(path)
+	ticksPerBeat = midoFile.ticks_per_beat
+	trainTicksPerBeat.append(ticksPerBeat)
+	for msg in midoFile:
+		if msg.type in FEATURES_BY_TYPE:
+			if msg.type == 'set_tempo':
+				tempo = int(mido.tempo2bpm(msg.tempo))
+				trainTempos.append(tempo)
+			if hasattr(msg, 'time'):
+				# convert from seconds to ticks
+				msg.time = int(msg.time / tempo * ticksPerBeat)
+			if hasattr(msg, 'velocity'):
+				msg.velocity = int(msg.velocity / 5) * 5
+			print msg
+			newSong.append(msg)
+	tokenized[songIndex] = generate_noteseq_from_msgarray(newSong)
 
 tokenized = list()
 if os.path.isdir(sys.argv[1]):
@@ -358,6 +368,13 @@ if os.path.isdir(sys.argv[1]):
 else:
 	tokenizeFile(sys.argv[1], 0)
 
+if len(trainTempos):
+	medianTempo = sorted(trainTempos)[int(len(trainTempos)/2)]
+if len(trainTicksPerBeat):
+	medianTicksPerBeat = sorted(trainTicksPerBeat)[int(len(trainTicksPerBeat)/2)]
+
+print "tempo=%s ticksPerBeat=%s" % (medianTempo, medianTicksPerBeat)
+
 # Convert the notes to ints
 counts = Counter([msg for song in tokenized for msg in song])
 vocab = dict()
@@ -367,7 +384,7 @@ lookup[STOP_TOKEN] = STOP_TOKEN
 vocabSize = len(counts)+2 # include START_TOKEN/STOP_TOKEN
 index = 2 # account for START_TOKEN (0) and STOP_TOKEN (1)
 for word in counts:
-	print(word)
+	# print(word)
 	vocab[word] = index
 	lookup[index] = word
 	index += 1
@@ -377,7 +394,7 @@ for word in counts:
 trainInts1 = list()
 trainFeatures1 = list()
 for song in tokenized:
-	print(song[0])
+	# print(song[0])
 	# newsong = generate_noteseq_from_msgarray(song)
 	# b = True
 	# barr = []
@@ -408,8 +425,8 @@ trainInts = np.array(trainInts1)
 trainFeatures = np.array(trainFeatures1)
 
 # Inputs and outputs
-batchSize = 2
-numSteps = 4
+batchSize = 4
+numSteps = 1
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 keepProb = tf.placeholder(tf.float32)
@@ -440,7 +457,7 @@ regularization = 50 * regularize_W + 50 * regularize_B
 
 # Setup training
 sess = tf.InteractiveSession()
-trainStep = tf.train.AdamOptimizer(1e-2).minimize(perplexity + regularization)
+trainStep = tf.train.AdamOptimizer(1e-4).minimize(perplexity + regularization)
 sess.run(tf.initialize_all_variables())
 
 for feature, lookup in id_lookup_by_feature.items():
@@ -451,7 +468,7 @@ saver = tf.train.Saver()
 if len(sys.argv) > 3:
 	saver.restore(sess, sys.argv[3])
 else:
-	NUM_EPOCHS = 100
+	NUM_EPOCHS = 400
 	for e in range(NUM_EPOCHS):
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))

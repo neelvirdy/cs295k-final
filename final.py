@@ -18,17 +18,19 @@ if len(sys.argv) < 3:
 	sys.exit(1)
 
 class Note:
-	def __init__(self, m, t, d, v):
+	def __init__(self, m, t, d, v, interval, octave):
 		self.mes = m
 		self.absTime = t
-		self.duration = d or 0
+		self.duration = d
 		self.endV = v
+		self.interval = interval
+		self.octave = octave
 
 	def __hash__(self):
 		return abs(hash(self.mes)) * 31 + self.duration * 7 + self.mes.time * 97
 
 	def __str__(self):
-		return str(self.mes) + " duration: " + str(self.duration) + " abs time: " + str(self.absTime) + " end velocity: " + str(self.endV)
+		return '%s duration=%s absTime=%s endV=%s interval=%s octave=%s' % (self.mes, self.duration, self.absTime, self.endV, self.interval, self.octave)
 
 	def __eq__(self, other):
 		if isinstance(other, self.__class__):
@@ -39,17 +41,17 @@ class Note:
 	def __ne__(self, other):
 		return not self.__eq__(other)
 
-
 NONE_TOKEN = 0
 START_TOKEN = 1
 STOP_TOKEN = 2
-SHARED_FEATURES = {'type', 'time'}
 FEATURES_BY_TYPE = {
-	'note_on': {'channel', 'note', 'velocity', 'duration'} | SHARED_FEATURES,
-	'control_change': {'channel', 'control', 'value'} | SHARED_FEATURES,
-	'program_change': {'channel', 'program'} | SHARED_FEATURES,
-	'pitchwheel': {'channel', 'pitch'} | SHARED_FEATURES,
-	'note_off': {'channel', 'note', 'velocity'} | SHARED_FEATURES,
+	'note_on': {'type', 'channel', 'velocity', 'time', 'duration', 'interval', 'octave'},
+	# 'control_change': {'type', 'channel', 'control', 'value', 'time'},
+	'program_change': {'type', 'channel', 'program', 'time'},
+	'pitchwheel': {'type', 'channel', 'pitch', 'time'},
+	'note_off': {'type', 'channel', 'velocity', 'time', 'interval', 'octave'},
+	'key_signature': {'type', 'key', 'time'},
+	'set_tempo': {'type', 'tempo', 'time'}
 }
 FEATURES_SET = reduce(set.union, FEATURES_BY_TYPE.values())
 FEATURES = sorted(list(FEATURES_SET))
@@ -70,6 +72,18 @@ init_value_lookup = {
 id_lookup_by_feature = {feature:init_id_lookup.copy() for feature in FEATURES}
 value_lookup_by_feature = {feature:init_value_lookup.copy() for feature in FEATURES}
 
+# returns semitones from key, not the interval roman numeral
+semitones_per_octave = 12
+def get_interval(note, key):
+	interval = (note - key) % semitones_per_octave
+	return interval
+
+def get_octave(note):
+	return int(note / semitones_per_octave)
+
+def get_note(key, octave, interval):
+	return key + octave * semitones_per_octave + interval
+
 #mido.Message(msgType, channel, ..., time)
 #msgType is note_on to start, note_on to end, time is diff between events
 
@@ -77,6 +91,7 @@ value_lookup_by_feature = {feature:init_value_lookup.copy() for feature in FEATU
 def generate_noteseq_from_msgarray(msgArray):
 	noteSeq = []
 	time = 0
+	key = get_note_id('C')
 	# for mes in msgArray:
 	# 	print mes
 	for i in range(len(msgArray)):
@@ -90,16 +105,20 @@ def generate_noteseq_from_msgarray(msgArray):
 
 	for i in range(len(msgArray)):
 		curr = msgArray[i]
+		if curr.type is 'key_signature':
+			key = get_note_id(curr.key)
 		time += curr.time
 		if curr.type is 'note_on':
+			interval = get_interval(curr.note, key)
+			octave = get_octave(curr.note)
 			duration = 0
 			for j in range(i+1, len(msgArray)):
 				duration += msgArray[j].time
 				if msgArray[j].type is 'note_off' and curr.note is msgArray[j].note and curr.channel is msgArray[j].channel:
-					noteSeq += [Note(curr, time, duration, msgArray[j].velocity)]
+					noteSeq += [Note(curr, time, duration, msgArray[j].velocity, interval, octave)]
 					break
 		elif curr.type is 'control_change' or curr.type is 'program_change' or curr.type is 'pitchwheel':
-			noteSeq += [Note(curr, time, 0, 0)]
+			noteSeq += [Note(curr, time, 0, 0, 0, 0)]
 	# for note in noteSeq:
 	# 	print str(note.type) + ' ' + str(note.duration)
 	for i in range(1, len(noteSeq)):
@@ -119,10 +138,14 @@ def generate_msgarray_from_noteseq(noteSeq):
 
 	msgArray = []
 	noteoffs = []
+	key = get_note_id('C')
 	for i in range(len(noteSeq)):
 		curr = noteSeq[i]
 		curr.mes.time = curr.absTime
+		if curr.mes.type is 'key_signature':
+			key = get_note_id(curr.mes.key)
 		if curr.mes.type is 'note_on':
+			curr.mes.note = get_note(key, curr.octave, curr.interval)
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,
@@ -153,7 +176,7 @@ def generate_message_from_feature_ids(featureIds):
 		msg = mido.Message(
 			msgType,
 			channel=features['channel'],
-			note=features['note'],
+			note=0, # this gets set later
 			velocity=features['velocity'],
 			time=features['time'])
 		endV = features['velocity']
@@ -178,7 +201,7 @@ def generate_message_from_feature_ids(featureIds):
 			time=features['time'])
 	else:
 		msg = mido.Message(msgType)
-	return Note(msg, None, features['duration'], endV);
+	return Note(msg, None, features['duration'], endV, features['interval'], features['octave']);
 
 def extract_features(message):
 	if isinstance(message, int) and (message == START_TOKEN or message == STOP_TOKEN):
@@ -208,16 +231,53 @@ def next_batch(token_ids, features, i, batch_size, num_steps):
 	features_y = np.take(features, indices+1, axis=0)
 	return features_x, features_y
 
+note_id_by_name = {
+	'C': 0,
+	'C#': 1,
+	'Db': 1,
+	'D': 2,
+	'D#': 3,
+	'Eb': 3,
+	'E': 4,
+	'F': 5,
+	'F#': 6,
+	'Gb': 6,
+	'G': 7,
+	'G#': 8,
+	'Ab': 8,
+	'A': 9,
+	'A#': 10,
+	'Bb': 10,
+	'B': 11,
+	'Cb': 11
+}
+
+def get_note_id(key):
+	minor = key[-1] == 'm'
+	if minor:
+		note_name = key[:-1]
+	else:
+		note_name = key
+	note_id = note_id_by_name[note_name]
+	return note_id
+
 def tokenizeFile(path, songIndex):
 	tokenized.append(list())
 	newSong = list()
-	for msg in mido.MidiFile(path):
-		if not isinstance(msg, mido.MetaMessage):
-			#if msg.type == 'note_off':
-			#	msg = mido.Message('note_on', note=msg.note, velocity=0, time=msg.time)
-			if msg.type in FEATURES_BY_TYPE:
-				msg.time = int(msg.time * 90 * 4 * 2)
-				newSong.append(msg)
+	tempo = 120
+	midoFile = mido.MidiFile(path)
+	ticksPerBeat = midoFile.ticks_per_beat
+	for msg in midoFile:
+		if msg.type in FEATURES_BY_TYPE:
+			if msg.type is 'set_tempo':
+				tempo = mido.tempo2bpm(msg.tempo)
+			if hasattr(msg, 'time'):
+				# convert from seconds to ticks
+				msg.time = int(msg.time / tempo * ticksPerBeat)
+			if hasattr(msg, 'velocity'):
+				msg.velocity = int(msg.velocity / 5) * 5
+			print msg
+			newSong.append(msg)
 	tokenized[songIndex] = generate_noteseq_from_msgarray(newSong)
 
 def make_embedding(embedSize, featureSize):
@@ -357,7 +417,7 @@ keepProb = tf.placeholder(tf.float32)
 featureSizes = [len(id_lookup_by_feature[feature]) for feature in FEATURES]
 
 # Embedding matrix
-embedSize = 128
+embedSize = 64
 E = make_embeddings(embedSize, featureSizes)
 e = embeddings_lookup(E, x)
 eDrop = tf.nn.dropout(e, keepProb)
@@ -383,12 +443,15 @@ sess = tf.InteractiveSession()
 trainStep = tf.train.AdamOptimizer(1e-2).minimize(perplexity + regularization)
 sess.run(tf.initialize_all_variables())
 
+for feature, lookup in id_lookup_by_feature.items():
+	print feature, len(lookup)
+
 saver = tf.train.Saver()
 
 if len(sys.argv) > 3:
 	saver.restore(sess, sys.argv[3])
 else:
-	NUM_EPOCHS = 2000
+	NUM_EPOCHS = 100
 	for e in range(NUM_EPOCHS):
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
@@ -406,6 +469,8 @@ else:
 			i += 1
 		if e % 20 == 0:
 			print(e, perp, reg)
+	print(e, perp, reg)
+
 	if SAVE_MODEL:
 		ts = time.time()
 		timestamp = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d_%H_%M_%S')
@@ -425,6 +490,7 @@ while nextToken != STOP_TOKEN:
 	nextFeatureIds = get_next_token_feature_ids(batchLogits)
 	nextToken = generate_message_from_feature_ids(nextFeatureIds)
 	if nextToken != STOP_TOKEN:
+		print nextToken
 		genNotes.append(nextToken)
 	i += 1
 

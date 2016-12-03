@@ -46,10 +46,9 @@ START_TOKEN = 1
 STOP_TOKEN = 2
 FEATURES_BY_TYPE = {
 	'note_on': {'type', 'channel', 'velocity', 'time', 'duration', 'interval', 'octave'},
-	# 'control_change': {'type', 'channel', 'control', 'value', 'time'},
+	'control_change': {'type', 'channel', 'control', 'value', 'time'},
 	'program_change': {'type', 'channel', 'program', 'time'},
 	'pitchwheel': {'type', 'channel', 'pitch', 'time'},
-	'note_off': {},
 	'key_signature': {'type', 'key', 'time'},
 	'set_tempo': {'type', 'tempo', 'time'}
 }
@@ -147,12 +146,14 @@ def generate_msgarray_from_noteseq(noteSeq):
 			key = get_note_id(curr.mes.key)
 		if curr.mes.type is 'note_on':
 			curr.mes.note = get_note(key, curr.octave, curr.interval)
-			time = mido.bpm2tempo(medianTempo) * (curr.mes.time + curr.duration) / medianTicksPerBeat
+			noteOnTime = mido.bpm2tempo(medianTempo) * curr.mes.time / medianTicksPerBeat
+			noteOffTime = mido.bpm2tempo(medianTempo) * (curr.mes.time + curr.duration) / medianTicksPerBeat
+			curr.mes.time = noteOnTime
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,
 						velocity=curr.endV,
-						time=time)]
+						time=noteOffTime)]
 		elif curr.mes.type is 'control_change' or curr.mes.type is 'program_change' or curr.mes.type is 'pitchwheel':
 			msg = [curr.mes]
 		msgArray += msg
@@ -206,9 +207,7 @@ def generate_message_from_feature_ids(featureIds):
 
 def extract_features(message):
 	if isinstance(message, int) and (message == START_TOKEN or message == STOP_TOKEN):
-		features = np.array([NONE_TOKEN for _ in range(numFeatures)])
-		type_index = ID_BY_FEATURE['type']
-		features[type_index] = message
+		features = np.array([message for _ in range(numFeatures)])
 		return features
 	features = np.zeros(numFeatures)
 	for i, feature in FEATURE_BY_ID.items():
@@ -349,7 +348,7 @@ def tokenizeFile(path, songIndex):
 	ticksPerBeat = midoFile.ticks_per_beat
 	trainTicksPerBeat.append(ticksPerBeat)
 	for msg in midoFile:
-		if msg.type in FEATURES_BY_TYPE:
+		if msg.type in FEATURES_BY_TYPE or msg.type == 'note_off':
 			if msg.type == 'set_tempo':
 				tempo = int(mido.tempo2bpm(msg.tempo))
 				trainTempos.append(tempo)
@@ -381,28 +380,9 @@ print "tempo=%s ticksPerBeat=%s" % (medianTempo, medianTicksPerBeat)
 # Build train/test int lists
 trainFeatures1 = list()
 for song in tokenized:
-	# print(song[0])
-	# newsong = generate_noteseq_from_msgarray(song)
-	# b = True
-	# barr = []
-	# for i in range(len(newsong)):
-	# 	if i >= len(song):
-	# 		break
-	# 	#print("i: " + str(i))
-	# 	#print("song: " + str(song[i]))
-	# 	#print("nsng: " + str(newsong[i]))
-	# 	if song[i] != newsong[i]:
-	# 		barr.append(i)
-	# 		b = False
-	# print(b)
-	# print(barr)
-	# save_output(sys.argv[2], newsong)
-
 	trainFeatures1.append(extract_features(START_TOKEN))
-	for word in song:
-		# print word
-		# print vocab[word]
-		trainFeatures1.append(extract_features(word))
+	for msg in song:
+		trainFeatures1.append(extract_features(msg))
 	trainFeatures1.append(extract_features(STOP_TOKEN))
 trainFeatures = np.array(trainFeatures1)
 

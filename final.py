@@ -21,7 +21,7 @@ class Note:
 	def __init__(self, m, t, d, v, interval, octave):
 		self.mes = m
 		self.absTime = t
-		self.duration = d
+		self.duration = d or 0
 		self.endV = v
 		self.interval = interval
 		self.octave = octave
@@ -49,7 +49,7 @@ FEATURES_BY_TYPE = {
 	# 'control_change': {'type', 'channel', 'control', 'value', 'time'},
 	'program_change': {'type', 'channel', 'program', 'time'},
 	'pitchwheel': {'type', 'channel', 'pitch', 'time'},
-	'note_off': {'type', 'channel', 'velocity', 'time', 'interval', 'octave'},
+	'note_off': {},
 	'key_signature': {'type', 'key', 'time'},
 	'set_tempo': {'type', 'tempo', 'time'}
 }
@@ -69,6 +69,7 @@ init_value_lookup = {
 	START_TOKEN: START_TOKEN,
 	STOP_TOKEN: STOP_TOKEN
 }
+
 id_lookup_by_feature = {feature:init_id_lookup.copy() for feature in FEATURES}
 value_lookup_by_feature = {feature:init_value_lookup.copy() for feature in FEATURES}
 
@@ -166,7 +167,6 @@ def generate_msgarray_from_noteseq(noteSeq):
 
 	return msgArray
 
-
 def generate_message_from_feature_ids(featureIds):
 	features = {feature:value_lookup_by_feature[feature][featureIds[i]] for i, feature in FEATURE_BY_ID.items()}
 	msgType = features['type']
@@ -206,7 +206,10 @@ def generate_message_from_feature_ids(featureIds):
 
 def extract_features(message):
 	if isinstance(message, int) and (message == START_TOKEN or message == STOP_TOKEN):
-		return np.array([message for _ in range(numFeatures)])
+		features = np.array([NONE_TOKEN for _ in range(numFeatures)])
+		type_index = ID_BY_FEATURE['type']
+		features[type_index] = message
+		return features
 	features = np.zeros(numFeatures)
 	for i, feature in FEATURE_BY_ID.items():
 		id_lookup = id_lookup_by_feature[feature]
@@ -223,8 +226,8 @@ def extract_features(message):
 		features[i] = feature_id
 	return features
 
-def next_batch(token_ids, features, i, batch_size, num_steps):
-	max_start = len(token_ids) - num_steps
+def next_batch(features, i, batch_size, num_steps):
+	max_start = len(features) - num_steps
 	starts = np.random.randint(0, max_start, size=batch_size)
 	ends = starts + num_steps
 	indices = np.array([range(start, end) for start, end in zip(starts, ends)])
@@ -306,16 +309,16 @@ def get_next_token_feature_id(feature, msgType, featureLogits):
 		return STOP_TOKEN
 	if feature not in FEATURES_BY_TYPE[msgType]:
 		return NONE_TOKEN
-	logits = featureLogits[0][2:] # Assumes None is 0 and START is 1
+	logits = featureLogits[0][3:] # Assumes 0:3 is NONE START STOP
 	## Sample from distribution using logits
-	next_id = sample(logits) + 2 # Assumes None is 0 and START is 1
+	next_id = sample(logits) + 3 # Assumes 0:3 is NONE START STOP
 	## Pick most likely logit
-	# next_id = np.argmax(logits) + 2 # Assumes None is 0 and START is 1
+	# next_id = np.argmax(logits) + 3 # Assumes 0:3 is NONE START STOP
 	return next_id
 
 def get_next_token_feature_ids(batchLogits):
 	typeFeatureId = ID_BY_FEATURE['type']
-	msgTypeId = sample(batchLogits[typeFeatureId][0][2:]) + 2 # Assumes None is 0 and START is 1
+	msgTypeId = sample(batchLogits[typeFeatureId][0][2:]) + 2 # Assumes 0:2 is NONE START
 	msgType = value_lookup_by_feature['type'][msgTypeId]
 	featureIds = [get_next_token_feature_id(feature, msgType, batchLogits[i]) for i, feature in FEATURE_BY_ID.items()]
 	featureIds[typeFeatureId] = msgTypeId
@@ -375,23 +378,7 @@ if len(trainTicksPerBeat):
 
 print "tempo=%s ticksPerBeat=%s" % (medianTempo, medianTicksPerBeat)
 
-# Convert the notes to ints
-counts = Counter([msg for song in tokenized for msg in song])
-vocab = dict()
-lookup = dict()
-lookup[START_TOKEN] = START_TOKEN
-lookup[STOP_TOKEN] = STOP_TOKEN
-vocabSize = len(counts)+2 # include START_TOKEN/STOP_TOKEN
-index = 2 # account for START_TOKEN (0) and STOP_TOKEN (1)
-for word in counts:
-	# print(word)
-	vocab[word] = index
-	lookup[index] = word
-	index += 1
-
-
 # Build train/test int lists
-trainInts1 = list()
 trainFeatures1 = list()
 for song in tokenized:
 	# print(song[0])
@@ -411,17 +398,12 @@ for song in tokenized:
 	# print(barr)
 	# save_output(sys.argv[2], newsong)
 
-	trainInts1.append(START_TOKEN)
 	trainFeatures1.append(extract_features(START_TOKEN))
 	for word in song:
 		# print word
 		# print vocab[word]
-
-		trainInts1.append(vocab[word])
 		trainFeatures1.append(extract_features(word))
-	trainInts1.append(STOP_TOKEN) # append STOP_TOKEN token
 	trainFeatures1.append(extract_features(STOP_TOKEN))
-trainInts = np.array(trainInts1)
 trainFeatures = np.array(trainFeatures1)
 
 # Inputs and outputs
@@ -439,7 +421,7 @@ E = make_embeddings(embedSize, featureSizes)
 e = embeddings_lookup(E, x)
 eDrop = tf.nn.dropout(e, keepProb)
 
-lstmSize = 256
+lstmSize = 64
 lstm = tf.nn.rnn_cell.BasicLSTMCell(lstmSize, state_is_tuple=True)
 initialState = lstm.zero_state(batchSize, tf.float32)
 
@@ -473,8 +455,8 @@ else:
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 		X = 0
-		while X + batchSize * numSteps + 1 <= len(trainInts):
-			batch_x, batch_y = next_batch(trainInts, trainFeatures, i, batchSize, numSteps)
+		while X + batchSize * numSteps + 1 <= len(trainFeatures):
+			batch_x, batch_y = next_batch(trainFeatures, i, batchSize, numSteps)
 			state, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
 			feed_dict={
 				x: batch_x,
@@ -498,7 +480,6 @@ else:
 state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 genNotes = list()
 nextToken = START_TOKEN
-i = 0
 while nextToken != STOP_TOKEN:
 	tokenFeatures = extract_features(nextToken)
 	currFeatures = np.tile(tokenFeatures, (batchSize, 1, 1))
@@ -509,7 +490,6 @@ while nextToken != STOP_TOKEN:
 	if nextToken != STOP_TOKEN:
 		print nextToken
 		genNotes.append(nextToken)
-	i += 1
 
 genMsgs = generate_msgarray_from_noteseq(genNotes)
 

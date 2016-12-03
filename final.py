@@ -209,14 +209,16 @@ def next_batch(token_ids, features, i, batch_size, num_steps):
 	return features_x, features_y
 
 def tokenizeFile(path, songIndex):
-	tokenized.append(list());
+	tokenized.append(list())
+	newSong = list()
 	for msg in mido.MidiFile(path):
 		if not isinstance(msg, mido.MetaMessage):
 			#if msg.type == 'note_off':
 			#	msg = mido.Message('note_on', note=msg.note, velocity=0, time=msg.time)
 			if msg.type in FEATURES_BY_TYPE:
 				msg.time = int(msg.time * 90 * 4 * 2)
-				tokenized[songIndex].append(msg)
+				newSong.append(msg)
+	tokenized[songIndex] = generate_noteseq_from_msgarray(newSong)
 
 def make_embedding(embedSize, featureSize):
 	return tf.Variable(
@@ -297,7 +299,7 @@ else:
 	tokenizeFile(sys.argv[1], 0)
 
 # Convert the notes to ints
-counts = Counter([msg for song in tokenized for msg in generate_noteseq_from_msgarray(song)])
+counts = Counter([msg for song in tokenized for msg in song])
 vocab = dict()
 lookup = dict()
 lookup[START_TOKEN] = START_TOKEN
@@ -316,7 +318,7 @@ trainInts1 = list()
 trainFeatures1 = list()
 for song in tokenized:
 	print(song[0])
-	newsong = generate_noteseq_from_msgarray(song)
+	# newsong = generate_noteseq_from_msgarray(song)
 	# b = True
 	# barr = []
 	# for i in range(len(newsong)):
@@ -334,7 +336,7 @@ for song in tokenized:
 
 	trainInts1.append(START_TOKEN)
 	trainFeatures1.append(extract_features(START_TOKEN))
-	for word in newsong:
+	for word in song:
 		# print word
 		# print vocab[word]
 

@@ -102,6 +102,8 @@ def generate_noteseq_from_msgarray(msgArray):
 			noteSeq += [Note(curr, time, 0, 0)]
 	# for note in noteSeq:
 	# 	print str(note.type) + ' ' + str(note.duration)
+	for i in range(1, len(noteSeq)):
+		noteSeq[i].mes.time = noteSeq[i].absTime - noteSeq[i-1].absTime
 	return noteSeq
 
 def getTime(msg):
@@ -110,10 +112,16 @@ def getTime(msg):
 #Input: A sequence of notes of the format [[msgType, channel, time, duration, note, velocity, control, value, program, pitch], ...]
 #Output: A sequence of myMessages which correspond to the MIDI stream
 def generate_msgarray_from_noteseq(noteSeq):
+	absTime = 0
+	for note in noteSeq:
+		note.absTime = absTime
+		absTime += note.mes.time
+
 	msgArray = []
 	noteoffs = []
 	for i in range(len(noteSeq)):
 		curr = noteSeq[i]
+		curr.mes.time = curr.absTime
 		if curr.mes.type is 'note_on':
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
@@ -297,7 +305,7 @@ lookup[STOP_TOKEN] = STOP_TOKEN
 vocabSize = len(counts)+2 # include START_TOKEN/STOP_TOKEN
 index = 2 # account for START_TOKEN (0) and STOP_TOKEN (1)
 for word in counts:
-	print word
+	print(word)
 	vocab[word] = index
 	lookup[index] = word
 	index += 1
@@ -307,7 +315,7 @@ for word in counts:
 trainInts1 = list()
 trainFeatures1 = list()
 for song in tokenized:
-	print song[0]
+	print(song[0])
 	newsong = generate_noteseq_from_msgarray(song)
 	# b = True
 	# barr = []
@@ -418,14 +426,9 @@ while nextToken != STOP_TOKEN:
 		genNotes.append(nextToken)
 	i += 1
 
-absTime = 0
-for note in genNotes:
-	note.absTime = absTime
-	absTime += note.mes.time
-
 genMsgs = generate_msgarray_from_noteseq(genNotes)
 
 for msg in genMsgs:
-	print msg
+	print(msg)
 
 save_output(sys.argv[2], genMsgs)

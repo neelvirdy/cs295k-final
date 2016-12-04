@@ -11,6 +11,7 @@ import random
 from os.path import basename
 from collections import Counter
 
+SAMPLE = True
 SAVE_MODEL = False
 
 if len(sys.argv) < 3:
@@ -146,9 +147,7 @@ def generate_msgarray_from_noteseq(noteSeq):
 			key = get_note_id(curr.mes.key)
 		if curr.mes.type == 'note_on':
 			curr.mes.note = get_note(key, curr.octave, curr.interval)
-			noteOnTime = mido.bpm2tempo(medianTempo) * curr.mes.time / medianTicksPerBeat
-			noteOffTime = mido.bpm2tempo(medianTempo) * (curr.mes.time + curr.duration) / medianTicksPerBeat
-			curr.mes.time = noteOnTime
+			noteOffTime = curr.mes.time + curr.duration
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,
@@ -287,7 +286,6 @@ def make_feature_predictor(lstmSize, rnn2D, y, featureSize):
 	# Compute loss
 	y1D = tf.reshape(y, [-1]) # -1 means flatten
 	weights = tf.tile(tf.ones(shape=[1]), [tf.shape(y1D)[0]])
-	# weights = tf.Variable(tf.constant(1.0, shape=weights_shape))
 	loss = tf.nn.seq2seq.sequence_loss_by_example([logits], [y1D], [weights])
 	return W, B, logits, loss
 
@@ -296,7 +294,7 @@ def make_feature_predictors(lstmSize, rnn2D, y, featureSizes):
 
 def sample(logits):
 	if logits.min() == logits.max():
-		return np.random.choice(len(logits, 1))[0]
+		return np.random.choice(len(logits), 1)[0]
 	logits = logits - logits.min()
 	sq_logits = np.multiply(logits, logits)
 	prob_dist = np.divide(sq_logits, sq_logits.sum())
@@ -308,23 +306,27 @@ def get_next_token_feature_id(feature, msgType, featureLogits):
 		return STOP_TOKEN
 	if feature not in FEATURES_BY_TYPE[msgType]:
 		return NONE_TOKEN
-	logits = featureLogits[0][3:] # Assumes 0:3 is NONE START STOP
-	## Sample from distribution using logits
-	next_id = sample(logits) + 3 # Assumes 0:3 is NONE START STOP
-	## Pick most likely logit
-	# next_id = np.argmax(logits) + 3 # Assumes 0:3 is NONE START STOP
+	logits = featureLogits[0]
+	if SAMPLE:
+		next_id = sample(logits[3:]) + 3 # Assumes 0:3 is NONE START STOP
+	else:
+		next_id = np.argmax(logits[3:]) + 3 # Assumes 0:3 is NONE START STOP
 	return next_id
 
 def get_next_token_feature_ids(batchLogits):
 	typeFeatureId = ID_BY_FEATURE['type']
-	msgTypeId = sample(batchLogits[typeFeatureId][0][2:]) + 2 # Assumes 0:2 is NONE START
+	msgTypeLogits = batchLogits[typeFeatureId][0]
+	if SAMPLE:
+		msgTypeId = sample(msgTypeLogits[2:]) + 2 # Assumes 0:2 is NONE START
+	else:
+		msgTypeId = np.argmax(msgTypeLogits[2:]) + 2
 	msgType = value_lookup_by_feature['type'][msgTypeId]
 	featureIds = [get_next_token_feature_id(feature, msgType, batchLogits[i]) for i, feature in FEATURE_BY_ID.items()]
 	featureIds[typeFeatureId] = msgTypeId
 	return featureIds
 
-trainTempos = []
-medianTempo = 120
+trainBpms = []
+medianBpm = 120
 trainTicksPerBeat = []
 medianTicksPerBeat = 480
 
@@ -333,8 +335,8 @@ def save_output(out_path, msgs):
 	track = mido.MidiTrack()
 	mid.tracks.append(track)
 	track.append(mido.Message('program_change', program=0, time=0))
-	tempo = mido.bpm2tempo(medianTempo)
-	track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
+	medianTempo = mido.bpm2tempo(medianBpm)
+	track.append(mido.MetaMessage('set_tempo', tempo=medianTempo, time=0))
 	mid.ticks_per_beat = medianTicksPerBeat
 	for msg in msgs:
 		track.append(msg)
@@ -343,18 +345,18 @@ def save_output(out_path, msgs):
 def tokenizeFile(path, songIndex):
 	tokenized.append(list())
 	newSong = list()
-	tempo = 120
+	bpm = 120
 	midoFile = mido.MidiFile(path)
 	ticksPerBeat = midoFile.ticks_per_beat
 	trainTicksPerBeat.append(ticksPerBeat)
 	for msg in midoFile:
 		if msg.type in FEATURES_BY_TYPE or msg.type == 'note_off':
 			if msg.type == 'set_tempo':
-				tempo = int(mido.tempo2bpm(msg.tempo))
-				trainTempos.append(tempo)
+				bpm = int(mido.tempo2bpm(msg.tempo))
+				trainBpms.append(bpm)
 			if hasattr(msg, 'time'):
 				# convert from seconds to ticks
-				msg.time = int(msg.time / tempo * ticksPerBeat)
+				msg.time = int(msg.time * (bpm/60) * ticksPerBeat)
 			if hasattr(msg, 'velocity'):
 				msg.velocity = int(msg.velocity / 5) * 5
 			print msg
@@ -370,12 +372,12 @@ if os.path.isdir(sys.argv[1]):
 else:
 	tokenizeFile(sys.argv[1], 0)
 
-if len(trainTempos):
-	medianTempo = sorted(trainTempos)[int(len(trainTempos)/2)]
+if len(trainBpms):
+	medianBpm = sorted(trainBpms)[int(len(trainBpms)/2)]
 if len(trainTicksPerBeat):
 	medianTicksPerBeat = sorted(trainTicksPerBeat)[int(len(trainTicksPerBeat)/2)]
 
-print "tempo=%s ticksPerBeat=%s" % (medianTempo, medianTicksPerBeat)
+print "tempo=%s ticksPerBeat=%s" % (medianBpm, medianTicksPerBeat)
 
 # Build train/test int lists
 trainFeatures1 = list()
@@ -388,7 +390,7 @@ trainFeatures = np.array(trainFeatures1)
 
 # Inputs and outputs
 batchSize = 4
-numSteps = 1
+numSteps = 8
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 keepProb = tf.placeholder(tf.float32)
@@ -401,7 +403,7 @@ E = make_embeddings(embedSize, featureSizes)
 e = embeddings_lookup(E, x)
 eDrop = tf.nn.dropout(e, keepProb)
 
-lstmSize = 64
+lstmSize = 256
 lstm = tf.nn.rnn_cell.BasicLSTMCell(lstmSize, state_is_tuple=True)
 initialState = lstm.zero_state(batchSize, tf.float32)
 
@@ -430,14 +432,14 @@ saver = tf.train.Saver()
 if len(sys.argv) > 3:
 	saver.restore(sess, sys.argv[3])
 else:
-	NUM_EPOCHS = 400
+	NUM_EPOCHS = 800
 	for e in range(NUM_EPOCHS):
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 		X = 0
 		while X + batchSize * numSteps + 1 <= len(trainFeatures):
 			batch_x, batch_y = next_batch(trainFeatures, i, batchSize, numSteps)
-			state, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
+			_, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
 			feed_dict={
 				x: batch_x,
 				y: batch_y,

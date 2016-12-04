@@ -90,3 +90,6 @@ ENV/
 
 # Generated midi
 results/
+
+# Generated models
+models/

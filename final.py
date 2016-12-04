@@ -11,7 +11,7 @@ import random
 from os.path import basename
 from collections import Counter
 
-SAMPLE = True
+SAMPLE = False
 SAVE_MODEL = False
 
 if len(sys.argv) < 3:
@@ -227,12 +227,12 @@ def extract_features(message):
 	return features
 
 def next_batch(features, i, batch_size, num_steps):
-	max_start = len(features) - num_steps
-	starts = np.random.randint(0, max_start, size=batch_size)
+	start = i * batch_size * num_steps
+	starts = np.arange(start, start + batch_size)
 	ends = starts + num_steps
 	indices = np.array([range(start, end) for start, end in zip(starts, ends)])
-	features_x = np.take(features, indices, axis=0)
-	features_y = np.take(features, indices+1, axis=0)
+	features_x = np.take(features, indices, axis=0, mode='wrap')
+	features_y = np.take(features, indices+1, axis=0, mode='wrap')
 	return features_x, features_y
 
 note_id_by_name = {
@@ -393,8 +393,8 @@ for song in tokenized:
 trainFeatures = np.array(trainFeatures1)
 
 # Inputs and outputs
-batchSize = 4
-numSteps = 8
+batchSize = 2
+numSteps = 16
 x = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 y = tf.placeholder(tf.int32, [batchSize, None, numFeatures])
 keepProb = tf.placeholder(tf.float32)
@@ -421,7 +421,7 @@ abs_W_means = [tf.reduce_mean(tf.abs(W)) for W in Ws]
 abs_B_means = [tf.reduce_mean(tf.abs(B)) for B in Bs]
 regularize_W = tf.add_n(abs_W_means)/numFeatures
 regularize_B = tf.add_n(abs_B_means)/numFeatures
-regularization = 50 * regularize_W + 50 * regularize_B
+regularization = 0 * regularize_W + 0 * regularize_B
 
 # Setup training
 sess = tf.InteractiveSession()
@@ -441,9 +441,9 @@ else:
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))
 		X = 0
-		while X + batchSize * numSteps + 1 <= len(trainFeatures):
+		while X < len(trainFeatures):
 			batch_x, batch_y = next_batch(trainFeatures, i, batchSize, numSteps)
-			_, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
+			state, _, perp, reg = sess.run([outst, trainStep, perplexity, regularization],
 			feed_dict={
 				x: batch_x,
 				y: batch_y,

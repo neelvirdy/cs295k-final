@@ -147,7 +147,9 @@ def generate_msgarray_from_noteseq(noteSeq):
 			key = get_note_id(curr.mes.key)
 		if curr.mes.type == 'note_on':
 			curr.mes.note = get_note(key, curr.octave, curr.interval)
-			noteOffTime = curr.mes.time + curr.duration
+			# convert from beats to ticks
+			noteOnTime = round(curr.mes.time * medianTicksPerBeat)
+			noteOffTime = round((curr.mes.time + curr.duration) * medianTicksPerBeat)
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,
@@ -355,8 +357,10 @@ def tokenizeFile(path, songIndex):
 				bpm = int(mido.tempo2bpm(msg.tempo))
 				trainBpms.append(bpm)
 			if hasattr(msg, 'time'):
-				# convert from seconds to ticks
-				msg.time = int(msg.time * (bpm/60) * ticksPerBeat)
+				# convert from seconds to beats
+				beats = msg.time * (bpm/60)
+				beatsRounded = round(beats * 128) / 128
+				msg.time = beatsRounded
 			if hasattr(msg, 'velocity'):
 				msg.velocity = int(msg.velocity / 5) * 5
 			print msg

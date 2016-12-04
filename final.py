@@ -96,7 +96,7 @@ def generate_noteseq_from_msgarray(msgArray):
 	# 	print mes
 	for i in range(len(msgArray)):
 		m = msgArray[i]
-		if m.type is 'note_on' and m.velocity is 0:
+		if m.type == 'note_on' and m.velocity == 0:
 			msgArray[i] = mido.Message('note_off',
 						channel=m.channel,
 						note=m.note,
@@ -105,19 +105,19 @@ def generate_noteseq_from_msgarray(msgArray):
 
 	for i in range(len(msgArray)):
 		curr = msgArray[i]
-		if curr.type is 'key_signature':
+		if curr.type == 'key_signature':
 			key = get_note_id(curr.key)
 		time += curr.time
-		if curr.type is 'note_on':
+		if curr.type == 'note_on':
 			interval = get_interval(curr.note, key)
 			octave = get_octave(curr.note)
 			duration = 0
 			for j in range(i+1, len(msgArray)):
 				duration += msgArray[j].time
-				if msgArray[j].type is 'note_off' and curr.note is msgArray[j].note and curr.channel is msgArray[j].channel:
+				if msgArray[j].type == 'note_off' and curr.note == msgArray[j].note and curr.channel == msgArray[j].channel:
 					noteSeq += [Note(curr, time, duration, msgArray[j].velocity, interval, octave)]
 					break
-		elif curr.type is 'control_change' or curr.type is 'program_change' or curr.type is 'pitchwheel':
+		elif curr.type == 'control_change' or curr.type == 'program_change' or curr.type == 'pitchwheel':
 			noteSeq += [Note(curr, time, 0, 0, 0, 0)]
 	# for note in noteSeq:
 	# 	print str(note.type) + ' ' + str(note.duration)
@@ -142,9 +142,9 @@ def generate_msgarray_from_noteseq(noteSeq):
 	for i in range(len(noteSeq)):
 		curr = noteSeq[i]
 		curr.mes.time = curr.absTime
-		if curr.mes.type is 'key_signature':
+		if curr.mes.type == 'key_signature':
 			key = get_note_id(curr.mes.key)
-		if curr.mes.type is 'note_on':
+		if curr.mes.type == 'note_on':
 			curr.mes.note = get_note(key, curr.octave, curr.interval)
 			noteOnTime = mido.bpm2tempo(medianTempo) * curr.mes.time / medianTicksPerBeat
 			noteOffTime = mido.bpm2tempo(medianTempo) * (curr.mes.time + curr.duration) / medianTicksPerBeat
@@ -154,7 +154,7 @@ def generate_msgarray_from_noteseq(noteSeq):
 						note=curr.mes.note,
 						velocity=curr.endV,
 						time=noteOffTime)]
-		elif curr.mes.type is 'control_change' or curr.mes.type is 'program_change' or curr.mes.type is 'pitchwheel':
+		elif curr.mes.type == 'control_change' or curr.mes.type == 'program_change' or curr.mes.type == 'pitchwheel':
 			msg = [curr.mes]
 		msgArray += msg
 
@@ -172,9 +172,9 @@ def generate_message_from_feature_ids(featureIds):
 	features = {feature:value_lookup_by_feature[feature][featureIds[i]] for i, feature in FEATURE_BY_ID.items()}
 	msgType = features['type']
 	endV = 0
-	if msgType is STOP_TOKEN:
+	if msgType == STOP_TOKEN:
 		return STOP_TOKEN
-	if msgType is 'note_on':
+	if msgType == 'note_on':
 		msg = mido.Message(
 			msgType,
 			channel=features['channel'],
@@ -182,20 +182,20 @@ def generate_message_from_feature_ids(featureIds):
 			velocity=features['velocity'],
 			time=features['time'])
 		endV = features['velocity']
-	elif msgType is 'control_change':
+	elif msgType == 'control_change':
 		msg = mido.Message(
 			msgType,
 			channel=features['channel'],
 			control=features['control'],
 			value=features['value'],
 			time=features['time'])
-	elif msgType is 'program_change':
+	elif msgType == 'program_change':
 		msg = mido.Message(
 			msgType,
 			channel=features['channel'],
 			program=features['program'],
 			time=features['time'])
-	elif msgType is 'pitchwheel':
+	elif msgType == 'pitchwheel':
 		msg = mido.Message(
 			msgType,
 			channel=features['channel'],
@@ -295,7 +295,7 @@ def make_feature_predictors(lstmSize, rnn2D, y, featureSizes):
 	return zip(*[make_feature_predictor(lstmSize, rnn2D, y[:, :, i], featureSize) for i, featureSize in enumerate(featureSizes)])
 
 def sample(logits):
-	if logits.min() is logits.max():
+	if logits.min() == logits.max():
 		return np.random.choice(len(logits, 1))[0]
 	logits = logits - logits.min()
 	sq_logits = np.multiply(logits, logits)
@@ -304,7 +304,7 @@ def sample(logits):
 	return feature_id
 
 def get_next_token_feature_id(feature, msgType, featureLogits):
-	if msgType is STOP_TOKEN:
+	if msgType == STOP_TOKEN:
 		return STOP_TOKEN
 	if feature not in FEATURES_BY_TYPE[msgType]:
 		return NONE_TOKEN

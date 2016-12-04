@@ -148,8 +148,9 @@ def generate_msgarray_from_noteseq(noteSeq):
 		if curr.mes.type == 'note_on':
 			curr.mes.note = get_note(key, curr.octave, curr.interval)
 			# convert from beats to ticks
-			noteOnTime = round(curr.mes.time * medianTicksPerBeat)
-			noteOffTime = round((curr.mes.time + curr.duration) * medianTicksPerBeat)
+			noteOnTime = int(round(curr.mes.time * medianTicksPerBeat))
+			noteOffTime = int(round((curr.mes.time + curr.duration) * medianTicksPerBeat))
+			curr.mes.time = noteOnTime
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,

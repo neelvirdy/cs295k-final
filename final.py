@@ -19,13 +19,14 @@ if len(sys.argv) < 3:
 	sys.exit(1)
 
 class Note:
-	def __init__(self, m, t, d, v, interval, octave):
+	def __init__(self, m, t, d, v, interval, octave, controlAndValue):
 		self.mes = m
 		self.absTime = t
 		self.duration = d
 		self.endV = v
 		self.interval = interval
 		self.octave = octave
+		self.controlAndValue = controlAndValue
 
 	def __hash__(self):
 		return abs(hash(self.mes)) * 31 + self.duration * 7 + self.mes.time * 97
@@ -46,8 +47,8 @@ NONE_TOKEN = 0
 START_TOKEN = 1
 STOP_TOKEN = 2
 FEATURES_BY_TYPE = {
-	'note_on': {'type', 'channel', 'velocity', 'time', 'duration', 'interval', 'octave'},
-	'control_change': {'type', 'channel', 'control', 'value', 'time'},
+	'note_on': {'type', 'channel', 'velocity', 'time', 'duration', 'interval', 'octave', 'endV'},
+	'control_change': {'type', 'channel', 'controlAndValue', 'time'},
 	'program_change': {'type', 'channel', 'program', 'time'},
 	'pitchwheel': {'type', 'channel', 'pitch', 'time'},
 	'key_signature': {'type', 'key', 'time'},
@@ -114,10 +115,13 @@ def generate_noteseq_from_msgarray(msgArray):
 			for j in range(i+1, len(msgArray)):
 				duration += msgArray[j].time
 				if msgArray[j].type == 'note_off' and curr.note == msgArray[j].note and curr.channel == msgArray[j].channel:
-					noteSeq += [Note(curr, time, duration, msgArray[j].velocity, interval, octave)]
+					noteSeq += [Note(curr, time, duration, msgArray[j].velocity, interval, octave, None)]
 					break
-		elif curr.type == 'control_change' or curr.type == 'program_change' or curr.type == 'pitchwheel':
-			noteSeq += [Note(curr, time, None, None, None, None)]
+		elif curr.type == 'control_change':
+			controlAndValue = str(curr.control) + '&' + str(curr.value)
+			noteSeq += [Note(curr, time, None, None, None, None, controlAndValue)]
+		elif curr.type == 'program_change' or curr.type == 'pitchwheel':
+			noteSeq += [Note(curr, time, None, None, None, None, None)]
 	for i in range(1, len(noteSeq)):
 		noteSeq[i].mes.time = noteSeq[i].absTime - noteSeq[i-1].absTime
 	return noteSeq
@@ -156,7 +160,12 @@ def generate_msgarray_from_noteseq(noteSeq):
 						note=curr.mes.note,
 						velocity=curr.endV,
 						time=noteOffTime)]
-		elif curr.mes.type == 'control_change' or curr.mes.type == 'program_change' or curr.mes.type == 'pitchwheel':
+		elif curr.mes.type == 'control_change':
+			control, value = curr.controlAndValue.split('&')
+			curr.mes.control = int(control)
+			curr.mes.value = int(value)
+			msg = [curr.mes]
+		elif curr.mes.type == 'program_change' or curr.mes.type == 'pitchwheel':
 			msg = [curr.mes]
 		msgArray += msg
 
@@ -173,7 +182,6 @@ def generate_msgarray_from_noteseq(noteSeq):
 def generate_note_from_feature_ids(featureIds):
 	features = {feature:value_lookup_by_feature[feature][featureIds[i]] for i, feature in FEATURE_BY_ID.items()}
 	msgType = features['type']
-	endV = 0
 	if msgType == STOP_TOKEN:
 		return STOP_TOKEN
 	if msgType == 'note_on':
@@ -183,13 +191,12 @@ def generate_note_from_feature_ids(featureIds):
 			note=0, # this gets set later
 			velocity=features['velocity'],
 			time=features['time'])
-		endV = features['velocity']
 	elif msgType == 'control_change':
 		msg = mido.Message(
 			msgType,
 			channel=features['channel'],
-			control=features['control'],
-			value=features['value'],
+			control=0, # this gets set later
+			value=0, # this gets set later
 			time=features['time'])
 	elif msgType == 'program_change':
 		msg = mido.Message(
@@ -210,7 +217,7 @@ def generate_note_from_feature_ids(featureIds):
 			time=features['time'])
 	else:
 		msg = mido.Message(msgType)
-	return Note(msg, None, features['duration'], endV, features['interval'], features['octave']);
+	return Note(msg, None, features['duration'], features['endV'], features['interval'], features['octave'], features['controlAndValue']);
 
 def extract_features(message):
 	if isinstance(message, int) and (message == START_TOKEN or message == STOP_TOKEN):

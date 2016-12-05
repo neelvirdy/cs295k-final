@@ -11,8 +11,8 @@ import random
 from os.path import basename
 from collections import Counter
 
-SAMPLE = False
-SAVE_MODEL = False
+SAMPLE = True
+SAVE_MODEL = True
 
 if len(sys.argv) < 3:
 	print("Give input file and output destination")
@@ -22,7 +22,7 @@ class Note:
 	def __init__(self, m, t, d, v, interval, octave):
 		self.mes = m
 		self.absTime = t
-		self.duration = d or 0
+		self.duration = d
 		self.endV = v
 		self.interval = interval
 		self.octave = octave
@@ -93,8 +93,6 @@ def generate_noteseq_from_msgarray(msgArray):
 	noteSeq = []
 	time = 0
 	key = get_note_id('C')
-	# for mes in msgArray:
-	# 	print mes
 	for i in range(len(msgArray)):
 		m = msgArray[i]
 		if m.type == 'note_on' and m.velocity == 0:
@@ -119,9 +117,7 @@ def generate_noteseq_from_msgarray(msgArray):
 					noteSeq += [Note(curr, time, duration, msgArray[j].velocity, interval, octave)]
 					break
 		elif curr.type == 'control_change' or curr.type == 'program_change' or curr.type == 'pitchwheel':
-			noteSeq += [Note(curr, time, 0, 0, 0, 0)]
-	# for note in noteSeq:
-	# 	print str(note.type) + ' ' + str(note.duration)
+			noteSeq += [Note(curr, time, None, None, None, None)]
 	for i in range(1, len(noteSeq)):
 		noteSeq[i].mes.time = noteSeq[i].absTime - noteSeq[i-1].absTime
 	return noteSeq
@@ -132,6 +128,13 @@ def getTime(msg):
 #Input: A sequence of notes of the format [[msgType, channel, time, duration, note, velocity, control, value, program, pitch], ...]
 #Output: A sequence of myMessages which correspond to the MIDI stream
 def generate_msgarray_from_noteseq(noteSeq):
+	# convert from beats to ticks
+	for note in noteSeq:
+		note.mes.time = int(round(note.mes.time * medianTicksPerBeat))
+		if note.duration is None:
+			note.duration = 0
+		note.duration = int(round(note.duration * medianTicksPerBeat))
+
 	absTime = 0
 	for note in noteSeq:
 		note.absTime = absTime
@@ -147,10 +150,7 @@ def generate_msgarray_from_noteseq(noteSeq):
 			key = get_note_id(curr.mes.key)
 		if curr.mes.type == 'note_on':
 			curr.mes.note = get_note(key, curr.octave, curr.interval)
-			# convert from beats to ticks
-			noteOnTime = int(round(curr.mes.time * medianTicksPerBeat))
-			noteOffTime = int(round((curr.mes.time + curr.duration) * medianTicksPerBeat))
-			curr.mes.time = noteOnTime
+			noteOffTime = curr.mes.time + curr.duration
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
 						note=curr.mes.note,
@@ -170,7 +170,7 @@ def generate_msgarray_from_noteseq(noteSeq):
 
 	return msgArray
 
-def generate_message_from_feature_ids(featureIds):
+def generate_note_from_feature_ids(featureIds):
 	features = {feature:value_lookup_by_feature[feature][featureIds[i]] for i, feature in FEATURE_BY_ID.items()}
 	msgType = features['type']
 	endV = 0
@@ -473,7 +473,7 @@ while nextToken != STOP_TOKEN:
 	state, batchLogits = sess.run([outst, logits],
 		feed_dict={x: currFeatures, keepProb: 1.0, initialState: state})
 	nextFeatureIds = get_next_token_feature_ids(batchLogits)
-	nextToken = generate_message_from_feature_ids(nextFeatureIds)
+	nextToken = generate_note_from_feature_ids(nextFeatureIds)
 	if nextToken != STOP_TOKEN:
 		print nextToken
 		genNotes.append(nextToken)

@@ -19,20 +19,19 @@ if len(sys.argv) < 3:
 	sys.exit(1)
 
 class Note:
-	def __init__(self, m, t, d, v, interval, octave, controlAndValue):
+	def __init__(self, m, t, d, v, channelAndIntervalAndOctave, controlAndValue):
 		self.mes = m
 		self.absTime = t
 		self.duration = d
 		self.endV = v
-		self.interval = interval
-		self.octave = octave
+		self.channelAndIntervalAndOctave = channelAndIntervalAndOctave
 		self.controlAndValue = controlAndValue
 
 	def __hash__(self):
 		return abs(hash(self.mes)) * 31 + self.duration * 7 + self.mes.time * 97
 
 	def __str__(self):
-		return '%s duration=%s absTime=%s endV=%s interval=%s octave=%s' % (self.mes, self.duration, self.absTime, self.endV, self.interval, self.octave)
+		return '%s duration=%s absTime=%s endV=%s channelAndIntervalAndOctave=%s' % (self.mes, self.duration, self.absTime, self.endV, self.channelAndIntervalAndOctave)
 
 	def __eq__(self, other):
 		if isinstance(other, self.__class__):
@@ -47,7 +46,7 @@ NONE_TOKEN = 0
 START_TOKEN = 1
 STOP_TOKEN = 2
 FEATURES_BY_TYPE = {
-	'note_on': {'type', 'channel', 'velocity', 'time', 'duration', 'interval', 'octave', 'endV'},
+	'note_on': {'type', 'velocity', 'time', 'duration', 'channelAndIntervalAndOctave', 'endV'},
 	'control_change': {'type', 'channel', 'controlAndValue', 'time'},
 	'program_change': {'type', 'channel', 'program', 'time'},
 	'pitchwheel': {'type', 'channel', 'pitch', 'time'},
@@ -111,17 +110,18 @@ def generate_noteseq_from_msgarray(msgArray):
 		if curr.type == 'note_on':
 			interval = get_interval(curr.note, key)
 			octave = get_octave(curr.note)
+			channelAndIntervalAndOctave = '%s&%s&%s' % (curr.channel, interval, octave)
 			duration = 0
 			for j in range(i+1, len(msgArray)):
 				duration += msgArray[j].time
 				if msgArray[j].type == 'note_off' and curr.note == msgArray[j].note and curr.channel == msgArray[j].channel:
-					noteSeq += [Note(curr, time, duration, msgArray[j].velocity, interval, octave, None)]
+					noteSeq += [Note(curr, time, duration, msgArray[j].velocity, channelAndIntervalAndOctave, None)]
 					break
 		elif curr.type == 'control_change':
 			controlAndValue = str(curr.control) + '&' + str(curr.value)
-			noteSeq += [Note(curr, time, None, None, None, None, controlAndValue)]
+			noteSeq += [Note(curr, time, None, None, None, controlAndValue)]
 		elif curr.type == 'program_change' or curr.type == 'pitchwheel':
-			noteSeq += [Note(curr, time, None, None, None, None, None)]
+			noteSeq += [Note(curr, time, None, None, None, None)]
 	for i in range(1, len(noteSeq)):
 		noteSeq[i].mes.time = noteSeq[i].absTime - noteSeq[i-1].absTime
 	return noteSeq
@@ -153,7 +153,9 @@ def generate_msgarray_from_noteseq(noteSeq):
 		if curr.mes.type == 'key_signature':
 			key = get_note_id(curr.mes.key)
 		if curr.mes.type == 'note_on':
-			curr.mes.note = get_note(key, curr.octave, curr.interval)
+			channel, interval, octave = curr.channelAndIntervalAndOctave.split('&')
+			curr.mes.channel = int(channel)
+			curr.mes.note = get_note(key, int(octave), int(interval))
 			noteOffTime = curr.mes.time + curr.duration
 			msg = [curr.mes, mido.Message('note_off',
 						channel=curr.mes.channel,
@@ -187,7 +189,7 @@ def generate_note_from_feature_ids(featureIds):
 	if msgType == 'note_on':
 		msg = mido.Message(
 			msgType,
-			channel=features['channel'],
+			channel=0, # this gets set later
 			note=0, # this gets set later
 			velocity=features['velocity'],
 			time=features['time'])
@@ -217,7 +219,7 @@ def generate_note_from_feature_ids(featureIds):
 			time=features['time'])
 	else:
 		msg = mido.Message(msgType)
-	return Note(msg, None, features['duration'], features['endV'], features['interval'], features['octave'], features['controlAndValue']);
+	return Note(msg, None, features['duration'], features['endV'], features['channelAndIntervalAndOctave'], features['controlAndValue']);
 
 def extract_features(message):
 	if isinstance(message, int) and (message == START_TOKEN or message == STOP_TOKEN):
@@ -449,7 +451,7 @@ saver = tf.train.Saver()
 if len(sys.argv) > 3:
 	saver.restore(sess, sys.argv[3])
 else:
-	NUM_EPOCHS = 800
+	NUM_EPOCHS = 400
 	for e in range(NUM_EPOCHS):
 		i = 0
 		state = (np.zeros([batchSize, lstmSize]), np.zeros([batchSize, lstmSize]))

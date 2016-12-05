@@ -203,6 +203,11 @@ def generate_note_from_feature_ids(featureIds):
 			channel=features['channel'],
 			pitch=features['pitch'],
 			time=features['time'])
+	elif msgType == 'key_signature':
+		msg = mido.MetaMessage(
+			msgType,
+			key=features['key'],
+			time=features['time'])
 	else:
 		msg = mido.Message(msgType)
 	return Note(msg, None, features['duration'], endV, features['interval'], features['octave']);
@@ -422,7 +427,7 @@ abs_W_means = [tf.reduce_mean(tf.abs(W)) for W in Ws]
 abs_B_means = [tf.reduce_mean(tf.abs(B)) for B in Bs]
 regularize_W = tf.add_n(abs_W_means)/numFeatures
 regularize_B = tf.add_n(abs_B_means)/numFeatures
-regularization = 0 * regularize_W + 0 * regularize_B
+regularization = 50 * regularize_W + 50 * regularize_B
 
 # Setup training
 sess = tf.InteractiveSession()
